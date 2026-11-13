@@ -227,7 +227,7 @@ def cmd_metadata(asc):
               "sexualContentGraphicAndNudity", "sexualContentOrNudity", "violenceCartoonOrFantasy",
               "violenceRealistic", "violenceRealisticProlongedGraphicOrSadistic", "gunsOrOtherWeapons"]
     flags = ["gambling", "unrestrictedWebAccess", "lootBox", "messagingAndChat", "userGeneratedContent",
-             "advertising", "parentalControls", "ageAssurance", "healthOrWellnessTopics"]
+             "advertising", "parentalControls", "ageAssurance", "healthOrWellnessTopics", "socialMedia"]
     attrs = {**{k: "NONE" for k in levels}, **{k: False for k in flags}}
     asc.patch(f"/ageRatingDeclarations/{decl['id']}", "ageRatingDeclarations", decl["id"], attrs)
     print("✓ age rating (4+)")

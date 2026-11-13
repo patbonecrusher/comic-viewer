@@ -20,7 +20,9 @@ final class Library {
     @ObservationIgnored private var rescanRequested = false
 
     private init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Comic Viewer", isDirectory: true)
+        // Screenshot hook: `-libraryName Demo` on the command line uses a separate, empty library.
+        let name = UserDefaults.standard.string(forKey: "libraryName") ?? "Comic Viewer"
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(name, isDirectory: true)
         do {
             store = try LibraryStore(directory: support)
         } catch {
