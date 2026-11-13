@@ -13,7 +13,7 @@ let count = args.count > 4 ? Int(args[4]) ?? book.pageCount : book.pageCount
 let direction: ReadingDirection = args.contains("rtl") ? .rightToLeft : .leftToRight
 
 for page in (first - 1)..<min(book.pageCount, first - 1 + count) {
-    let image = try book.image(at: page, maxPixelSize: 2400)     // about what the reader hands the detector
+    let image = try book.image(at: page, maxPixelSize: 4096)     // exactly what the reader hands the detector
     let started = Date()
     let panels = PanelDetector.detect(in: image, direction: direction)
     let ms = Int(Date().timeIntervalSince(started) * 1000)

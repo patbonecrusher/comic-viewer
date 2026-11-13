@@ -35,7 +35,9 @@ public enum PanelDetector {
             guard regions.count >= 2 else { continue }
             // Look for framed panels inside the bigger pieces the gutters left.
             let refined = regions.flatMap { region -> [Region] in
-                guard region.area * 100 >= page.width * page.height * 15 else { return [region] }
+                // Only in pieces big enough to plausibly hold several panels: an ordinary panel of a grid is
+                // full of railings, windows and doorways that outline convincing rectangles.
+                guard region.area * 100 >= page.width * page.height * 30 else { return [region] }
                 let inner = frames.frames(in: region)
                 return inner.isEmpty ? [region] : inner
             }
@@ -87,7 +89,9 @@ private struct GrayPage {
         let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
             guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
                                           space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
-            context.interpolationQuality = .medium
+            // High quality averages properly when shrinking a lot, so the result doesn't depend on how big
+            // the page was handed over (cheaper settings alias, which shows up as phantom edges).
+            context.interpolationQuality = .high
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
@@ -437,6 +441,7 @@ private struct FrameFinder {
             guard let side else { return false }
             return !(side.support >= support && side.standout >= 0.4)
         }
+        let isGridPanel = r.area * 2 < width * height
         var found: [(region: Region, score: Double)] = []
         // Candidates with exactly one side that isn't drawn well enough: possibly a panel tucked behind another.
         var tucked: [(region: Region, score: Double, weakSide: Int)] = []
@@ -448,7 +453,9 @@ private struct FrameFinder {
                     let topSide: Side? = top - r.y0 <= slack ? nil : side(vertical: false, at: top, from: left, to: right)
                     for bottom in ys[(j + 1)...] where bottom - top >= minHeight {
                         let candidate = Region(x0: left, y0: top, x1: right + 1, y1: bottom + 1)
-                        guard candidate.area >= minArea, candidate.area * 100 < r.area * 90 else { continue }
+                        // A rectangle taking up most of the area is the area again (its border's inner edge, a
+                        // window frame or railing just inside it), not a panel within it.
+                        guard candidate.area >= minArea, candidate.area * 100 < r.area * 75 else { continue }
                         // At most one side may be weak, so most candidates are thrown out after two or three sides.
                         let bottomSide: Side? = r.y1 - 1 - bottom <= slack ? nil : side(vertical: false, at: bottom, from: left, to: right)
                         if isWeak(topSide), isWeak(bottomSide) { continue }
@@ -467,7 +474,8 @@ private struct FrameFinder {
                             // clear of its surroundings, where a chance rectangle is patchy on at least one side.
                             let clarity = drawn.reduce(0) { $0 + $1.standout } / Double(drawn.count)
                             let weakest = drawn.map(\.support).min() ?? 0
-                            if mean >= 0.86 { found.append((candidate, mean + clarity * 0.5 + weakest * 0.5 + Double(drawn.count) * 0.02)) }
+                            // Inside one panel of a grid, only a crisply drawn outline is believable.
+                            if mean >= (isGridPanel ? 0.93 : 0.86) { found.append((candidate, mean + clarity * 0.5 + weakest * 0.5 + Double(drawn.count) * 0.02)) }
                         } else if weak.count == 1, drawn.count >= 3 {
                             let others = sides.indices.filter { $0 != weak[0] }.compactMap { sides[$0]?.support }
                             let othersMean = others.reduce(0, +) / Double(others.count)
@@ -513,7 +521,11 @@ private struct FrameFinder {
             kept.append(c)
         }
         guard !kept.isEmpty, kept.count <= 16 else { return [] }
-        let covered = kept.reduce(0) { $0 + $1.area }
+        // Count nested frames once.
+        let outermost = kept.filter { frame in
+            !kept.contains { $0 != frame && $0.area > frame.area && $0.intersectionArea(frame) * 100 >= frame.area * 85 }
+        }
+        let covered = outermost.reduce(0) { $0 + $1.area }
         guard covered * 100 >= r.area * 8 else { return [] }
         let ordered = inReadingOrder(kept)
         // Frames that tile the area are its panels.
