@@ -27,7 +27,14 @@ Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
   keyboard, click and swipe navigation, left-to-right or right-to-left (manga) per comic.
 - **Formats** — CBZ, CBR, PDF and folders of images; reads `ComicInfo.xml` when present.
 
-Status: early development, no release yet. Website: https://patbonecrusher.github.io/comic-viewer/
+## Install
+
+```sh
+brew install --cask patbonecrusher/tap/comic-viewer
+```
+
+Or download the signed, notarized app from [Releases](https://github.com/patbonecrusher/comic-viewer/releases/latest).
+Website: https://patbonecrusher.github.io/comic-viewer/
 
 ## Build
 

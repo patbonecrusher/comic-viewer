@@ -87,6 +87,7 @@
 
         .download { padding: 5rem 1.5rem; text-align: center; background: var(--surface); border-top: 1px solid rgba(255,255,255,0.06); }
         .download p { color: var(--text-muted); margin-bottom: 2.5rem; font-size: 1.05rem; }
+        .download a { color: var(--accent-2); }
         .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; max-width: 760px; margin: 0 auto; }
         .dl-card {
             background: var(--bg); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius);
@@ -156,7 +157,9 @@
 
 <section class="download" id="download">
     <h2>Get Comic Viewer</h2>
-    <p>Comic Viewer is in early development and has no release yet. Build it from source:</p>
+    <p>Install with Homebrew:</p>
+    <pre><b>brew install --cask</b> patbonecrusher/tap/comic-viewer</pre>
+    <p>Or <a href="https://github.com/patbonecrusher/comic-viewer/releases/latest">download the latest release</a> (signed and notarized), or build it from source:</p>
     <pre><b>git clone</b> https://github.com/patbonecrusher/comic-viewer
 <b>cd</b> comic-viewer &amp;&amp; <b>./build.sh --open</b></pre>
 </section>
