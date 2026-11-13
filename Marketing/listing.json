@@ -1,13 +1,13 @@
 {
-  "subtitle": "A native Mac comic reader with panel-by-panel viewing and a library for your collection.",
-  "description": "A native Mac comic reader with panel-by-panel viewing and a library for your collection.",
-  "promotionalText": "A native Mac comic reader with panel-by-panel viewing and a library for your collection.",
-  "keywords": "mac,utility",
+  "subtitle": "Read comics panel by panel",
+  "description": "Comic Viewer is a native Mac reader for your own comic files.\n\nPANEL BY PANEL\nComic Viewer finds the panels on each page and steps through them in reading order, zoomed to fill the window, with the rest of the page dimmed. Pages that are one big picture are shown whole.\n\nYOUR LIBRARY\nAdd the folders where your comics live. Comic Viewer shows covers, groups issues into series, remembers where you stopped in each comic, and lets you search. Your files are never moved or changed.\n\nA COMFORTABLE READER\n• Single page or double page, with facing pages paired correctly\n• Fit page, fit width, fit height, or pinch to zoom\n• Left-to-right or right-to-left (manga), remembered per comic\n• Thumbnails and a page scrubber\n• Keyboard, click and trackpad swipe navigation\n\nFORMATS\nCBZ, CBR, PDF and folders of images. ComicInfo.xml metadata is read when present.\n\nPRIVATE\nNo account, no ads, no tracking, no network access. Open source.",
+  "promotionalText": "Read comics panel by panel, and keep your whole collection in one library.",
+  "keywords": "comic,comics,cbz,cbr,manga,reader,viewer,panel,graphic novel,library",
   "supportUrl": "https://github.com/patbonecrusher/comic-viewer/issues",
   "marketingUrl": "https://patbonecrusher.github.io/comic-viewer/",
   "privacyPolicyUrl": "https://patbonecrusher.github.io/comic-viewer/privacy.html",
-  "primaryCategory": "UTILITIES",
-  "secondaryCategory": null,
+  "primaryCategory": "BOOKS",
+  "secondaryCategory": "ENTERTAINMENT",
   "copyright": "2026 Patrick Laplante",
-  "reviewNotes": "No account or setup required. Launch the app and use it directly."
+  "reviewNotes": "No account or setup required. Launch the app, choose File > Open and pick any CBZ, CBR or PDF comic (or add a folder of them to the library). The app reads only files and folders the user selects."
 }

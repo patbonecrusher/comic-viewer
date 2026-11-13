@@ -127,17 +127,15 @@
     <p class="platforms">macOS 15 Sequoia or later · Apple silicon &amp; Intel</p>
 </section>
 
-<section class="shots">
-    <img src="screenshot-1.png" alt="Comic Viewer main window" width="1600" height="1000">
-</section>
-
 <section class="features">
     <h2>What it does</h2>
     <div class="grid">
-        <!-- One card per feature: icon (emoji or SF-symbol-like glyph), title, one-sentence body. Use <kbd> for shortcuts. -->
-        <div class="card"><div class="icon">✨</div><h3>Feature one</h3><p>What it does and why it matters, in one sentence.</p></div>
-        <div class="card"><div class="icon">⚡</div><h3>Feature two</h3><p>Keep the tone concrete; mention shortcuts like <kbd>⌘K</kbd>.</p></div>
-        <div class="card"><div class="icon">🔒</div><h3>Private by design</h3><p>Sandboxed, no accounts, no telemetry.</p></div>
+        <div class="card"><div class="icon">🔍</div><h3>Panel by panel</h3><p>Finds the panels on each page and steps through them in reading order, zoomed to fit, with the rest of the page dimmed. Toggle with <kbd>⇧⌘P</kbd>.</p></div>
+        <div class="card"><div class="icon">📚</div><h3>A library for your collection</h3><p>Point it at your comics folders. Covers, series, search and reading progress, with your files left exactly where they are.</p></div>
+        <div class="card"><div class="icon">📖</div><h3>Single and double page</h3><p>Facing pages stay paired the way they were printed; covers and double-page spreads stand alone.</p></div>
+        <div class="card"><div class="icon">🇯🇵</div><h3>Manga too</h3><p>Right-to-left reading per comic: page order, panel order and the page scrubber all follow.</p></div>
+        <div class="card"><div class="icon">🗂️</div><h3>CBZ, CBR, PDF, folders</h3><p>Opens the common formats, and reads ComicInfo.xml for series and issue details when it is there.</p></div>
+        <div class="card"><div class="icon">🔒</div><h3>Private by design</h3><p>Sandboxed, no accounts, no telemetry, no network access at all.</p></div>
     </div>
 </section>
 
@@ -146,22 +144,13 @@
     <p>Swift, SwiftUI and AppKit. No Electron, no accounts, no telemetry. A small Swift package you can build yourself in under a minute.</p>
     <div class="badges">
         <span class="badge">Swift</span><span class="badge">SwiftUI</span><span class="badge">AppKit</span>
-        <span class="badge">App Sandbox</span><span class="badge">Universal binary</span><span class="badge">MIT-style open source</span>
+        <span class="badge">App Sandbox</span><span class="badge">Universal binary</span><span class="badge">MIT licensed</span>
     </div>
 </section>
 
 <section class="download" id="download">
     <h2>Get Comic Viewer</h2>
-    <p>Free on the Mac App Store, via Homebrew, or as a notarized download.</p>
-    <div class="dl-grid">
-        <a href="__APPSTORE_URL__" class="dl-card">
-            <div class="icon">🍎</div><h3>Mac App Store</h3><span>Sandboxed, auto-updating</span>
-        </a>
-        <a href="https://github.com/patbonecrusher/comic-viewer/releases/latest" class="dl-card">
-            <div class="icon">⬇️</div><h3>Direct download</h3><span>Notarized .zip from GitHub Releases</span>
-        </a>
-    </div>
-    <pre><b>brew install --cask</b> patbonecrusher/tap/comic-viewer</pre>
+    <p>Comic Viewer is in early development and has no release yet. Build it from source:</p>
     <pre><b>git clone</b> https://github.com/patbonecrusher/comic-viewer
 <b>cd</b> comic-viewer &amp;&amp; <b>./build.sh --open</b></pre>
 </section>
