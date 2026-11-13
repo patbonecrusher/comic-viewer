@@ -4,6 +4,16 @@ A native Mac comic reader with panel-by-panel viewing and a library for your col
 
 Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
 
+## What makes it different
+
+- **Panel by panel on the Mac.** Most Mac comic readers show whole pages. Comic Viewer steps through a page one panel
+  at a time, which makes comics comfortable on a laptop screen.
+- **Works on the comics you already own.** Panels are found on your Mac from the page artwork, so any CBZ, CBR or PDF
+  works: no store, no special format, nothing uploaded.
+- **You can fix what it gets wrong.** Every page has a panel editor, and corrections can be saved inside the CBZ so
+  they travel with the comic.
+- **Free and open.** No subscription, account, ads or network access; MIT licensed.
+
 ## Features
 
 - **Panel by panel** — detects the panels on each page and steps through them in reading order (⇧⌘P).
