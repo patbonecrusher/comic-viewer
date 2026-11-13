@@ -107,26 +107,34 @@ private struct Cutter {
     let direction: ReadingDirection
     /// Summed-area table of "this pixel is not background", so any row or column slice is counted in O(1).
     private let table: [Int32]
+    /// The same, with "background" meaning almost exactly the paper colour. Bright artwork (glare, sky,
+    /// snow) passes the looser test but not this one.
+    private let strictTable: [Int32]
     private let minGutter: Int
 
     init(page: GrayPage, background: UInt8, direction: ReadingDirection) {
         width = page.width; height = page.height; self.direction = direction
         minGutter = max(3, max(width, height) * 45 / 10_000)
-        let tolerance = 28, stride = width + 1
-        var table = [Int32](repeating: 0, count: stride * (height + 1))
+        let tolerance = 28, strictTolerance = 8, stride = width + 1
+        var table = [Int32](repeating: 0, count: stride * (height + 1)), strictTable = table
         for y in 0..<height {
-            var rowSum: Int32 = 0
+            var rowSum: Int32 = 0, strictSum: Int32 = 0
             for x in 0..<width {
-                if abs(Int(page.pixels[y * width + x]) - Int(background)) > tolerance { rowSum += 1 }
+                let difference = abs(Int(page.pixels[y * width + x]) - Int(background))
+                if difference > tolerance { rowSum += 1 }
+                if difference > strictTolerance { strictSum += 1 }
                 table[(y + 1) * stride + x + 1] = table[y * stride + x + 1] + rowSum
+                strictTable[(y + 1) * stride + x + 1] = strictTable[y * stride + x + 1] + strictSum
             }
         }
-        self.table = table
+        self.table = table; self.strictTable = strictTable
     }
 
-    private func ink(_ r: Region) -> Int {
+    private func ink(_ r: Region, strict: Bool = false) -> Int {
         let s = width + 1
-        return Int(table[r.y1 * s + r.x1] - table[r.y0 * s + r.x1] - table[r.y1 * s + r.x0] + table[r.y0 * s + r.x0])
+        return strict
+            ? Int(strictTable[r.y1 * s + r.x1] - strictTable[r.y0 * s + r.x1] - strictTable[r.y1 * s + r.x0] + strictTable[r.y0 * s + r.x0])
+            : Int(table[r.y1 * s + r.x1] - table[r.y0 * s + r.x1] - table[r.y1 * s + r.x0] + table[r.y0 * s + r.x0])
     }
 
     /// Runs of non-gutter lines across `region` along one axis. Gutters narrower than `minGutter`
@@ -159,8 +167,9 @@ private struct Cutter {
         let lower = rows ? r.y0 : r.x0, upper = rows ? r.y1 : r.x1
         let maxGutter = max(width, height) * 3 / 100
         guard upper - lower > 2 * maxGutter else { return [(lower, upper)] }
+        // Strict: the uncovered part of a crossed gutter is bare paper, not merely something pale.
         let inkPerLine = (lower..<upper).map { line in
-            ink(rows ? Region(x0: r.x0, y0: line, x1: r.x1, y1: line + 1) : Region(x0: line, y0: r.y0, x1: line + 1, y1: r.y1))
+            ink(rows ? Region(x0: r.x0, y0: line, x1: r.x1, y1: line + 1) : Region(x0: line, y0: r.y0, x1: line + 1, y1: r.y1), strict: true)
         }
         func isBusy(_ range: Range<Int>) -> Bool {
             let lines = range.clamped(to: 0..<inkPerLine.count)
