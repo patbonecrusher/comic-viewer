@@ -46,9 +46,16 @@ final class ReaderModel {
     /// Longest side pages are decoded at. Enough for a 5K display; keeps huge scans from eating memory.
     private nonisolated static let maxPagePixels = 4096
 
-    init(book: ComicBook) {
+    let title: String
+    /// The comic's entry in the library database, where reading position and settings are kept.
+    @ObservationIgnored private let recordID: Int64?
+
+    init(book: ComicBook, record saved: LibraryBook?) {
         self.book = book
-        let saved = Recents.entry(for: book.url)
+        recordID = saved?.id
+        title = saved.map { book in
+            [book.series == book.title ? "" : book.series, book.issueLabel ?? "", book.title].filter { !$0.isEmpty }.joined(separator: " — ")
+        } ?? book.title
         layout = saved?.layout.flatMap(PageLayout.init(rawValue:)) ?? Prefs.defaultLayout
         direction = saved?.direction.flatMap(ReadingDirection.init(rawValue:)) ?? Prefs.defaultDirection
         fit = Prefs.defaultFit
@@ -56,9 +63,11 @@ final class ReaderModel {
         pageCache.countLimit = 10
         thumbnailCache.countLimit = 600
         spreads = SpreadBuilder.spreads(pageCount: book.pageCount, layout: .single) { _ in false }
-        rebuildSpreads(keeping: min(saved?.page ?? 0, book.pageCount - 1))
+        // A finished comic starts over.
+        rebuildSpreads(keeping: saved?.finished == true ? 0 : min(saved?.page ?? 0, book.pageCount - 1))
         showCurrent()
         if layout == .double { scanSizes() }
+        saveProgress()
     }
 
     // MARK: - Position
@@ -104,8 +113,15 @@ final class ReaderModel {
     }
 
     func saveProgress() {
+        guard let recordID else { return }
         let page = currentPage, layout = layout.rawValue, direction = direction.rawValue, panelMode = panelMode
-        Recents.update(book.url) { $0.page = page; $0.layout = layout; $0.direction = direction; $0.panelMode = panelMode }
+        // Reaching the last page finishes the comic (a one-page comic is finished by opening it).
+        let atEnd = !canGoForward
+        Library.shared.update(recordID) {
+            $0.page = page; $0.layout = layout; $0.direction = direction; $0.panelMode = panelMode
+            $0.lastReadAt = Date()
+            if atEnd { $0.finished = true } else if page > 0 { $0.finished = false }
+        }
     }
 
     // MARK: - Layout

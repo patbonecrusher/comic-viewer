@@ -88,6 +88,73 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertEqual(PanelDetector.detect(in: context.makeImage()!), [PanelDetector.wholePage])
     }
 
+    func testGuessesMetadataFromFileNames() {
+        func parse(_ name: String) -> ComicMetadata { .fromFileName(URL(fileURLWithPath: "/Comics/Shelf/" + name)) }
+        var m = parse("Saga 012 (2013) (Digital) (Zone-Empire).cbz")
+        XCTAssertEqual([m.series, m.title], ["Saga", nil]); XCTAssertEqual(m.number, 12); XCTAssertEqual(m.year, 2013)
+        m = parse("Akira v03.cbz")
+        XCTAssertEqual(m.series, "Akira"); XCTAssertEqual(m.volume, 3); XCTAssertNil(m.number)
+        m = parse("bladerunner2019volume2_offworld.cbz")
+        XCTAssertEqual([m.series, m.title], ["bladerunner2019", "offworld"]); XCTAssertEqual(m.volume, 2)
+        m = parse("Blade Runner 2019.cbz")
+        XCTAssertEqual(m.series, "Blade Runner 2019"); XCTAssertNil(m.number)
+        m = parse("Batman #4.5.cbr")
+        XCTAssertEqual(m.series, "Batman"); XCTAssertEqual(m.number, 4.5)
+        m = parse("bladerunnerblacklotus_lasvegas_issue1.cbz")
+        XCTAssertEqual(m.series, "bladerunnerblacklotus lasvegas"); XCTAssertEqual(m.number, 1)
+        m = parse("001.cbz")
+        XCTAssertEqual(m.series, "Shelf"); XCTAssertEqual(m.number, 1)
+    }
+
+    private func makeComic(at url: URL, pages: Int, comicInfo: String? = nil) throws {
+        let archive = try Archive(url: url, accessMode: .create)
+        var files = try (1...pages).map { ("p\($0).png", try png(width: 20, height: 30)) }
+        if let comicInfo { files.append(("ComicInfo.xml", Data(comicInfo.utf8))) }
+        for (name, data) in files {
+            try archive.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count)) { position, size in
+                data.subdata(in: Int(position)..<Int(position) + size)
+            }
+        }
+    }
+
+    func testLibraryScanAddsReadsMetadataAndRemoves() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics/Saga")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeComic(at: comics.appendingPathComponent("Saga 001 (2012).cbz"), pages: 3)
+        try makeComic(at: comics.appendingPathComponent("whatever.cbz"), pages: 2, comicInfo: """
+            <?xml version="1.0"?><ComicInfo><Series>Saga</Series><Number>2</Number><Title>Chapter Two</Title>
+            <Writer>Brian K. Vaughan</Writer><Manga>YesAndRightToLeft</Manga><Pages><Page Image="0"/></Pages></ComicInfo>
+            """)
+        try Data("not a comic".utf8).write(to: comics.appendingPathComponent("broken.cbz"))
+
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: root.appendingPathComponent("Comics").path, bookmark: Data())
+        var result = store.scan(folder, at: root.appendingPathComponent("Comics"))
+        XCTAssertEqual([result.added, result.failed], [2, 1])
+
+        let books = store.books().sorted { ($0.number ?? 0) < ($1.number ?? 0) }
+        XCTAssertEqual(books.map(\.series), ["Saga", "Saga"])
+        XCTAssertEqual(books.map(\.pageCount), [3, 2])
+        XCTAssertEqual(books[0].year, 2012)
+        XCTAssertEqual(books[0].title, "Saga #1")
+        XCTAssertEqual(books[1].title, "Chapter Two")
+        XCTAssertEqual(books[1].writer, "Brian K. Vaughan")
+        XCTAssertEqual(books[1].direction, ReadingDirection.rightToLeft.rawValue)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.coverURL(for: books[0].id!).path))
+
+        // Progress survives a rescan; deleted files leave the library.
+        store.update(id: books[0].id!) { $0.page = 2; $0.lastReadAt = Date() }
+        try FileManager.default.removeItem(at: comics.appendingPathComponent("whatever.cbz"))
+        result = store.scan(folder, at: root.appendingPathComponent("Comics"))
+        XCTAssertEqual([result.added, result.updated, result.removed], [0, 0, 1])
+        XCTAssertEqual(store.books().map(\.page), [2])
+
+        try store.removeFolder(id: folder.id!)
+        XCTAssertTrue(store.books().isEmpty)
+    }
+
     func testRendersPDFPages() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: url) }

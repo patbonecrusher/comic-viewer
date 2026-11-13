@@ -32,7 +32,7 @@ struct ReaderView: View {
             }
         }
         .frame(minWidth: 480, minHeight: 360)
-        .navigationTitle(model.book.title)
+        .navigationTitle(model.title)
         .toolbar { toolbar }
     }
 

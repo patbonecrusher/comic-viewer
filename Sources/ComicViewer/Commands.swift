@@ -14,14 +14,17 @@ struct AppCommands: Commands {
             Button("Open…") { windows.showOpenPanel() }
                 .keyboardShortcut("o")
             Menu("Open Recent") {
-                ForEach(Recents.all.prefix(12)) { recent in
-                    Button(recent.title) { windows.open(recent) }
+                ForEach(Library.shared.recentlyRead.prefix(12)) { book in
+                    Button(book.title) { windows.open(book) }
                 }
-                Divider()
-                Button("Clear Menu") { Recents.clear() }
             }
+            Button("Add Folder to Library…") {
+                openWindow(id: "library")
+                Library.shared.chooseFolders()
+            }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
             Divider()
-            Button("Show Recents Window") { openWindow(id: "start") }
+            Button("Show Library") { openWindow(id: "library") }
                 .keyboardShortcut("0")
         }
 

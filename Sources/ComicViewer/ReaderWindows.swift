@@ -27,10 +27,9 @@ final class ReaderWindows {
         for url in panel.urls { open(url) }
     }
 
-    func open(_ recent: RecentComic) {
-        guard let url = recent.resolve() else {
-            Recents.remove(recent)
-            return present(error: "“\(recent.title)” couldn’t be found. It may have been moved or deleted.", title: recent.title)
+    func open(_ book: LibraryBook) {
+        guard let url = Library.shared.url(for: book) else {
+            return present(error: "It may have been moved or deleted.", title: book.title)
         }
         open(url)
     }
@@ -43,23 +42,26 @@ final class ReaderWindows {
         }
         Task {
             do {
-                let book = try await Task.detached(priority: .userInitiated) { try ComicBook(url: url) }.value
+                let library = Library.shared
+                let (book, record) = try await Task.detached(priority: .userInitiated) {
+                    let book = try ComicBook(url: url)
+                    return (book, library.record(opened: book))
+                }.value
                 guard open[url.path] == nil else { return }
-                show(book)
+                show(book, record: record)
             } catch {
                 present(error: error.localizedDescription, title: url.lastPathComponent)
             }
         }
     }
 
-    private func show(_ book: ComicBook) {
-        Recents.noteOpened(book)
-        let model = ReaderModel(book: book)
+    private func show(_ book: ComicBook, record: LibraryBook?) {
+        let model = ReaderModel(book: book, record: record)
         let controller = NSHostingController(rootView: ReaderView(model: model))
         controller.sceneBridgingOptions = [.toolbars, .title]
         let window = NSWindow(contentViewController: controller)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.title = book.title
+        window.title = record?.title ?? book.title
         window.representedURL = book.url
         window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false

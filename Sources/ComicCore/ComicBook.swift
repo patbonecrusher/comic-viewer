@@ -49,6 +49,13 @@ public final class ComicBook: @unchecked Sendable {
 
     public func pageName(at index: Int) -> String { source.pageName(at: index) }
 
+    /// What is known about the comic: its embedded ComicInfo.xml where there is one, the file name otherwise.
+    public func metadata() -> ComicMetadata {
+        var metadata = ComicMetadata.fromFileName(url)
+        if let data = source.sidecar(named: "ComicInfo.xml") { metadata.merge(ComicInfoParser.parse(data)) }
+        return metadata
+    }
+
     /// Decodes a page. Safe to call from any thread.
     public func image(at index: Int, maxPixelSize: Int? = nil) throws -> CGImage {
         guard (0..<pageCount).contains(index) else { throw ComicError.unreadablePage(index) }

@@ -5,12 +5,12 @@ struct ComicViewerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        // The hub window: recents today, the library later. Comics open in their own AppKit-managed
-        // reader windows (see ReaderWindows) so Finder, drag-and-drop and the menu all go through one path.
-        Window("Comic Viewer", id: "start") {
-            StartView()
+        // The collection. Comics open in their own AppKit-managed reader windows (see ReaderWindows)
+        // so Finder, drag-and-drop and the menu all go through one path.
+        Window("Library", id: "library") {
+            LibraryView()
         }
-        .defaultSize(width: 720, height: 520)
+        .defaultSize(width: 1000, height: 680)
         .commands { AppCommands() }
 
         Settings {

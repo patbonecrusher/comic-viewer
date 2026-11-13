@@ -46,7 +46,6 @@ enum Prefs {
     static let direction = "defaultDirection"
     static let fit = "defaultFit"
     static let background = "readerBackground"
-    static let recents = "recents"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [

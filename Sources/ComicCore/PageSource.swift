@@ -26,6 +26,12 @@ protocol PageSource: AnyObject {
     func image(at index: Int, maxPixelSize: Int?) throws -> CGImage
     /// Pixel size of the page without decoding it.
     func pageSize(at index: Int) throws -> CGSize
+    /// A non-page file stored with the comic, such as ComicInfo.xml. Matched on file name, ignoring case.
+    func sidecar(named name: String) -> Data?
+}
+
+extension PageSource {
+    func sidecar(named name: String) -> Data? { nil }
 }
 
 /// A source whose pages are encoded image files (everything except PDF).
