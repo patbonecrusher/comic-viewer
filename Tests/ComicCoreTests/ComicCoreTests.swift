@@ -49,6 +49,45 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertEqual(try book.image(at: 2, maxPixelSize: 20).height, 20)
     }
 
+    /// Two panels on top, one wide panel below, on white paper.
+    private func threePanelPage() -> CGImage {
+        let context = CGContext(data: nil, width: 600, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 600, height: 900))
+        context.setFillColor(CGColor(gray: 0.3, alpha: 1))
+        // Core Graphics has y pointing up: these two are the top row.
+        context.fill(CGRect(x: 30, y: 480, width: 250, height: 390))
+        context.fill(CGRect(x: 310, y: 480, width: 260, height: 390))
+        context.fill(CGRect(x: 30, y: 30, width: 540, height: 420))
+        return context.makeImage()!
+    }
+
+    func testDetectsPanelsInReadingOrder() {
+        let panels = PanelDetector.detect(in: threePanelPage())
+        XCTAssertEqual(panels.count, 3)
+        guard panels.count == 3 else { return }
+        XCTAssertEqual(panels[0].minX, 0.05, accuracy: 0.01)
+        XCTAssertEqual(panels[0].minY, 30.0 / 900, accuracy: 0.01)
+        XCTAssertEqual(panels[1].minX, 310.0 / 600, accuracy: 0.01)
+        XCTAssertEqual(panels[2].minY, 450.0 / 900, accuracy: 0.01)
+        XCTAssertEqual(panels[2].width, 0.9, accuracy: 0.01)
+    }
+
+    func testMangaOrderReadsTopRowRightToLeft() {
+        let panels = PanelDetector.detect(in: threePanelPage(), direction: .rightToLeft)
+        XCTAssertEqual(panels.count, 3)
+        guard panels.count == 3 else { return }
+        XCTAssertGreaterThan(panels[0].minX, panels[1].minX)
+        XCTAssertGreaterThan(panels[2].minY, panels[0].minY)
+    }
+
+    func testPageWithoutGuttersIsOnePanel() {
+        let context = CGContext(data: nil, width: 300, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(gray: 0.4, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 300, height: 400))
+        XCTAssertEqual(PanelDetector.detect(in: context.makeImage()!), [PanelDetector.wholePage])
+    }
+
     func testRendersPDFPages() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: url) }

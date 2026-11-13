@@ -16,7 +16,7 @@ struct ReaderView: View {
             }
             VStack(spacing: 0) {
                 ZStack {
-                    ReaderCanvas(model: model, display: model.display, fit: model.fit,
+                    ReaderCanvas(model: model, display: model.display, fit: model.fit, focus: model.focus,
                                  startAtRightEdge: model.direction == .rightToLeft,
                                  background: (ReaderBackground(rawValue: background) ?? .dark).color)
                     if let error = model.pageError {
@@ -76,6 +76,10 @@ struct ReaderView: View {
             }
             .pickerStyle(.segmented)
             .help("Single or double page")
+        }
+        ToolbarItem {
+            Toggle(isOn: $model.panelMode) { Label("Panel by Panel", systemImage: "rectangle.split.2x2") }
+                .help("Read one panel at a time")
         }
         ToolbarItem {
             Menu {

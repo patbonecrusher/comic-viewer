@@ -20,6 +20,7 @@ let package = Package(
         ),
         .executableTarget(name: "ComicViewer", dependencies: ["ComicCore"], path: "Sources/ComicViewer"),
         .executableTarget(name: "MakeIcon", path: "Tools/MakeIcon"),
+        .executableTarget(name: "PanelDebug", dependencies: ["ComicCore"], path: "Tools/PanelDebug"),
         .testTarget(name: "ComicCoreTests", dependencies: ["ComicCore"], path: "Tests/ComicCoreTests"),
     ]
 )

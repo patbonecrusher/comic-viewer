@@ -8,6 +8,7 @@ struct ReaderCanvas: NSViewRepresentable {
     // Passed as plain values so SwiftUI re-runs updateNSView when they change.
     let display: SpreadDisplay?
     let fit: FitMode
+    let focus: PanelFocus?
     let startAtRightEdge: Bool
     let background: NSColor
 
@@ -24,11 +25,16 @@ struct ReaderCanvas: NSViewRepresentable {
     func updateNSView(_ view: ReaderScrollView, context: Context) {
         view.backgroundColor = background
         view.startAtRightEdge = startAtRightEdge
+        view.dimColor = background
         if view.fit != fit {
             view.fit = fit
-            view.applyFit()
+            if focus == nil { view.applyFit() }
         }
-        if view.shownID != display?.id { view.show(display) }
+        if view.shownID != display?.id {
+            view.show(display, focus: focus)
+        } else if view.focus != focus {
+            view.setFocus(focus, animated: true)
+        }
     }
 }
 
@@ -37,6 +43,8 @@ final class ReaderScrollView: NSScrollView {
     var fit: FitMode = .page
     var startAtRightEdge = false
     private(set) var shownID: Int?
+    private(set) var focus: PanelFocus?
+    var dimColor = NSColor.black
 
     var onTurn: ((Int) -> Void)?            // -1 = toward the left edge, +1 = toward the right
     var onStep: ((Bool) -> Void)?           // true = forward in reading order
@@ -87,25 +95,72 @@ final class ReaderScrollView: NSScrollView {
 
     // MARK: Content
 
-    func show(_ display: SpreadDisplay?) {
+    func show(_ display: SpreadDisplay?, focus: PanelFocus?) {
         shownID = display?.id
         spreadView.show(display?.images ?? [], backingScale: window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
-        if fit == .custom { scrollToStart() } else { applyFit() }
+        if focus != nil || self.focus != nil {
+            setFocus(focus, animated: false)
+        } else if fit == .custom {
+            scrollToStart()
+        } else {
+            applyFit()
+        }
+    }
+
+    /// Zooms in on one panel and dims the rest of the page, or (nil) returns to the whole page.
+    func setFocus(_ newFocus: PanelFocus?, animated: Bool) {
+        focus = newFocus
+        let page = spreadView.frame.size
+        guard page.width > 0, page.height > 0 else { return }
+        let target = newFocus.map { focus -> NSRect in
+            NSRect(x: focus.rect.minX * page.width, y: focus.rect.minY * page.height,
+                   width: focus.rect.width * page.width, height: focus.rect.height * page.height)
+        }
+        spreadView.dim(around: target, color: dimColor, animated: animated)
+        // A focused panel is centred even when it sits at the edge of the page.
+        (contentView as? CenteringClipView)?.allowsOverscroll = target != nil
+        let viewport = bounds.size
+        let apply = { [self] in
+            if let target, viewport.width > 0, viewport.height > 0 {
+                // A little air around the panel so its border isn't flush with the window…
+                let margin = min(page.width, page.height) * 0.012
+                var frame = target.insetBy(dx: -margin, dy: -margin)
+                // …then widen or heighten to the window's shape, which centres the panel.
+                let aspect = viewport.width / viewport.height
+                if frame.width / frame.height < aspect {
+                    frame = frame.insetBy(dx: -(frame.height * aspect - frame.width) / 2, dy: 0)
+                } else {
+                    frame = frame.insetBy(dx: 0, dy: -(frame.width / aspect - frame.height) / 2)
+                }
+                magnify(toFit: frame)
+            } else if fit == .custom {
+                applyFit(as: .page)
+            } else {
+                applyFit()
+            }
+        }
+        guard animated else { return apply() }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            apply()
+        }
     }
 
     override func layout() {
         super.layout()
         if bounds.size != lastFittedSize {
             lastFittedSize = bounds.size
-            if fit != .custom { applyFit(resetScroll: false) }
+            if focus != nil { setFocus(focus, animated: false) } else if fit != .custom { applyFit(resetScroll: false) }
         }
     }
 
-    func applyFit(resetScroll: Bool = true) {
+    func applyFit(as mode: FitMode? = nil, resetScroll: Bool = true) {
         let content = spreadView.frame.size, viewport = bounds.size
         guard content.width > 0, content.height > 0, viewport.width > 0, viewport.height > 0 else { return }
         let scale: CGFloat
-        switch fit {
+        switch mode ?? fit {
         case .page: scale = min(viewport.width / content.width, viewport.height / content.height)
         case .width: scale = viewport.width / content.width
         case .height: scale = viewport.height / content.height
@@ -131,6 +186,7 @@ final class ReaderScrollView: NSScrollView {
     }
 
     func zoom(by factor: CGFloat) {
+        guard focus == nil else { return }      // panel mode sets the zoom itself
         let target = max(minMagnification, min(maxMagnification, magnification * factor))
         setMagnification(target, centeredAt: NSPoint(x: contentView.bounds.midX, y: contentView.bounds.midY))
         fit = .custom
@@ -138,11 +194,13 @@ final class ReaderScrollView: NSScrollView {
     }
 
     @objc private func userMagnified() {
+        guard focus == nil else { return }
         fit = .custom
         onFitChanged?(.custom)
     }
 
     override func smartMagnify(with event: NSEvent) {
+        guard focus == nil else { return }
         let mode: FitMode = fit == .width ? .page : .width
         fit = mode
         applyFit()
@@ -156,8 +214,8 @@ final class ReaderScrollView: NSScrollView {
         switch event.keyCode {
         case 123: onTurn?(-1)                                               // ←
         case 124: onTurn?(1)                                                // →
-        case 125: scrollVertically(by: 80)                                  // ↓
-        case 126: scrollVertically(by: -80)                                 // ↑
+        case 125: focus == nil ? scrollVertically(by: 80) : onStep?(true)   // ↓
+        case 126: focus == nil ? scrollVertically(by: -80) : onStep?(false) // ↑
         case 49: pageOrStep(forward: !event.modifierFlags.contains(.shift)) // space
         case 121: pageOrStep(forward: true)                                 // page down
         case 116: pageOrStep(forward: false)                                // page up
@@ -175,6 +233,7 @@ final class ReaderScrollView: NSScrollView {
 
     /// Space bar reading: scroll down through a zoomed page, then on to the next one.
     private func pageOrStep(forward: Bool) {
+        guard focus == nil else { onStep?(forward); return }
         let visible = contentView.bounds
         let maxY = spreadView.frame.height - visible.height
         if forward, visible.origin.y < maxY - 1 {
@@ -204,7 +263,7 @@ final class ReaderScrollView: NSScrollView {
             }
             return
         }
-        if swipeConsumed { return }      // swallow the rest of the gesture, including its momentum
+        if swipeConsumed || focus != nil { return }      // swallow the rest of the gesture; a focused panel stays put
         super.scrollWheel(with: event)
     }
 
@@ -216,7 +275,7 @@ final class ReaderScrollView: NSScrollView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = mouseDownPoint else { return }
+        guard let start = mouseDownPoint, focus == nil else { return }
         if !dragged, hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y) < 4 { return }
         dragged = true
         let origin = contentView.bounds.origin
@@ -233,7 +292,10 @@ final class ReaderScrollView: NSScrollView {
 
 /// Keeps the page centred when it is smaller than the window.
 final class CenteringClipView: NSClipView {
+    var allowsOverscroll = false
+
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        if allowsOverscroll { return proposedBounds }
         var rect = super.constrainBoundsRect(proposedBounds)
         guard let document = documentView else { return rect }
         if rect.width > document.frame.width { rect.origin.x = (document.frame.width - rect.width) / 2 }
@@ -253,11 +315,41 @@ final class SpreadView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    private let pages = CALayer()
+    private let shade = CAShapeLayer()
+
+    /// Covers everything except `rect` (in this view's coordinates) so one panel stands alone; nil clears it.
+    func dim(around rect: NSRect?, color: NSColor, animated: Bool) {
+        let path = CGMutablePath()
+        if let rect {
+            path.addRect(bounds)
+            path.addRect(rect)
+        }
+        if animated, shade.path != nil || rect != nil {
+            let animation = CABasicAnimation(keyPath: "path")
+            animation.fromValue = shade.presentation()?.path ?? shade.path
+            animation.duration = 0.3
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            shade.add(animation, forKey: "path")
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shade.fillColor = color.withAlphaComponent(0.88).cgColor
+        shade.path = rect == nil ? nil : path
+        CATransaction.commit()
+    }
+
     func show(_ images: [CGImage], backingScale: CGFloat) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
+        if pages.superlayer == nil {
+            shade.fillRule = .evenOdd
+            layer?.masksToBounds = false
+            layer?.addSublayer(pages)
+            layer?.addSublayer(shade)
+        }
+        pages.sublayers?.forEach { $0.removeFromSuperlayer() }
         guard !images.isEmpty else { return setFrameSize(.zero) }
         // Facing pages share the taller page's height.
         let height = CGFloat(images.map(\.height).max() ?? 1) / backingScale
@@ -270,7 +362,7 @@ final class SpreadView: NSView {
             page.minificationFilter = .trilinear
             page.magnificationFilter = .linear
             page.frame = CGRect(x: x, y: 0, width: width, height: height)
-            layer?.addSublayer(page)
+            pages.addSublayer(page)
             x += width
         }
         setFrameSize(NSSize(width: x, height: height))

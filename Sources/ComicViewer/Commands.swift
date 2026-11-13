@@ -32,6 +32,9 @@ struct AppCommands: Commands {
             }
             .pickerStyle(.inline)
             .disabled(reader == nil)
+            Toggle("Panel by Panel", isOn: Binding(get: { reader?.panelMode ?? false }, set: { reader?.panelMode = $0 }))
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .disabled(reader == nil)
             Picker("Reading Direction", selection: Binding(get: { reader?.direction ?? .leftToRight }, set: { reader?.direction = $0 })) {
                 ForEach(ReadingDirection.allCases, id: \.self) { Text($0.title).tag($0) }
             }

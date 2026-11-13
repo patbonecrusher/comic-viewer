@@ -13,6 +13,7 @@ struct RecentComic: Codable, Identifiable, Equatable {
     var pageCount: Int
     var layout: String?
     var direction: String?
+    var panelMode: Bool?
 
     func resolve() -> URL? {
         var stale = false
