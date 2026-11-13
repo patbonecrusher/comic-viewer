@@ -5,10 +5,12 @@ struct ComicViewerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // The hub window: recents today, the library later. Comics open in their own AppKit-managed
+        // reader windows (see ReaderWindows) so Finder, drag-and-drop and the menu all go through one path.
+        Window("Comic Viewer", id: "start") {
+            StartView()
         }
-        .defaultSize(width: 900, height: 640)
+        .defaultSize(width: 720, height: 520)
         .commands { AppCommands() }
 
         Settings {
@@ -21,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
         Prefs.registerDefaults()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { ReaderWindows.shared.open(url) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
