@@ -97,7 +97,9 @@ final class PanelEditorView: NSView {
             }
         }
         // The smallest panel under the pointer, so a panel inside another can still be picked.
-        let hit = panels.indices.filter { panels[$0].contains(point) }.min { panels[$0].width * panels[$0].height < panels[$1].width * panels[$1].height }
+        // A whole-page "overview" panel would swallow every click; it is picked from the list instead,
+        // leaving the page free for drawing panels on.
+        let hit = panels.indices.filter { panels[$0].contains(point) && panels[$0].width * panels[$0].height < 0.9 }.min { panels[$0].width * panels[$0].height < panels[$1].width * panels[$1].height }
         if let hit {
             drag = .move(index: hit, grab: CGPoint(x: point.x - panels[hit].minX, y: point.y - panels[hit].minY))
             if selection != hit { selection = hit; onChange?(panels, hit) }

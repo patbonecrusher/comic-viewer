@@ -81,6 +81,28 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertGreaterThan(panels[2].minY, panels[0].minY)
     }
 
+    /// Full-page artwork (a gradient, so there are no gutters) with two outlined panels set on top of it.
+    func testFindsFramedPanelsOverArtwork() {
+        let context = CGContext(data: nil, width: 600, height: 900, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        let colors = [CGColor(gray: 0.25, alpha: 1), CGColor(gray: 0.6, alpha: 1)] as CFArray
+        context.drawLinearGradient(CGGradient(colorsSpace: nil, colors: colors, locations: nil)!,
+                                   start: .zero, end: CGPoint(x: 600, y: 900), options: [])
+        // y points up in Core Graphics: the first frame is near the top left, the second lower right.
+        let frames = [CGRect(x: 60, y: 560, width: 220, height: 260), CGRect(x: 330, y: 120, width: 210, height: 300)]
+        for frame in frames {
+            context.setFillColor(CGColor(gray: 0.9, alpha: 1)); context.fill(frame)
+            context.setStrokeColor(CGColor(gray: 0, alpha: 1)); context.setLineWidth(5); context.stroke(frame)
+        }
+        let panels = PanelDetector.detect(in: context.makeImage()!)
+        // The page as a whole first, then each frame in reading order.
+        XCTAssertEqual(panels.count, 3)
+        guard panels.count == 3 else { return }
+        XCTAssertEqual(panels[0], PanelDetector.wholePage)
+        XCTAssertEqual(panels[1].minX, 0.1, accuracy: 0.02); XCTAssertEqual(panels[1].minY, 80.0 / 900, accuracy: 0.02)
+        XCTAssertEqual(panels[2].minX, 0.55, accuracy: 0.02); XCTAssertEqual(panels[2].height, 300.0 / 900, accuracy: 0.03)
+    }
+
     func testPageWithoutGuttersIsOnePanel() {
         let context = CGContext(data: nil, width: 300, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
                                 space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!

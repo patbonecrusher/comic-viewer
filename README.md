@@ -7,7 +7,8 @@ Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
 ## Features
 
 - **Panel by panel** — detects the panels on each page and steps through them in reading order (⇧⌘P).
-  Pages it can't split (splash pages, borderless layouts) are shown whole.
+  Works from gutters on grid pages and from panel borders where framed panels sit on full-page art (the whole
+  page is shown first, then each panel). Pages it can't split (splash pages, borderless or slanted layouts) are shown whole.
 - **Panel editor** — when detection gets a page wrong, draw, move, resize, reorder or delete its panels (⌘E).
   Edits are saved per page.
 - **Library** — add folders of comics; covers, series, search, unread / in progress / finished. Files stay where they are.

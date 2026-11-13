@@ -8,8 +8,13 @@ import Foundation
 /// vertical gutters, and repeat until nothing more can be cut. The order the cuts are made in is the
 /// reading order, so no separate sorting step is needed.
 ///
-/// It needs clean, straight gutters. Pages it can't make sense of (full-bleed art, overlapping or
-/// borderless panels) come back as one panel covering the whole page, which the reader shows as-is.
+/// Gutters only exist on pages laid out as a grid on plain paper. Many pages instead set framed
+/// panels on top of full-page artwork, so a second pass (`FrameFinder`) looks inside every large
+/// uncut area for rectangles whose four sides are drawn as straight edges. Where the frames leave a
+/// good part of the artwork showing, the area itself comes first as an overview, then its frames.
+///
+/// Pages neither method can make sense of (splash pages, borderless or irregular panels) come back
+/// as one panel covering the whole page, which the reader shows as-is.
 public enum PanelDetector {
     /// A panel's frame in unit coordinates (0…1, origin at the top left of the page).
     public typealias Panel = CGRect
@@ -18,11 +23,38 @@ public enum PanelDetector {
 
     public static func detect(in image: CGImage, direction: ReadingDirection = .leftToRight) -> [Panel] {
         guard let page = GrayPage(image: image, longSide: 900) else { return [wholePage] }
+        let frames = FrameFinder(page: page, direction: direction)
         for background in page.backgroundCandidates() {
-            let panels = Cutter(page: page, background: background, direction: direction).panels()
-            if panels.count >= 2 { return panels }
+            let regions = Cutter(page: page, background: background, direction: direction).regions()
+            guard regions.count >= 2 else { continue }
+            // Look for framed panels inside the bigger pieces the gutters left.
+            let refined = regions.flatMap { region -> [Region] in
+                guard region.area * 100 >= page.width * page.height * 15 else { return [region] }
+                let inner = frames.frames(in: region)
+                return inner.isEmpty ? [region] : inner
+            }
+            return refined.map { $0.unit(width: page.width, height: page.height) }
         }
-        return [wholePage]
+        let whole = Region(x0: 0, y0: 0, x1: page.width, y1: page.height)
+        let inner = frames.frames(in: whole)
+        return inner.isEmpty ? [wholePage] : inner.map { $0.unit(width: page.width, height: page.height) }
+    }
+}
+
+/// A pixel rectangle on the downsampled page (half-open).
+private struct Region: Equatable {
+    var x0: Int, y0: Int, x1: Int, y1: Int
+    var width: Int { x1 - x0 }
+    var height: Int { y1 - y0 }
+    var area: Int { width * height }
+
+    func unit(width: Int, height: Int) -> CGRect {
+        CGRect(x: Double(x0) / Double(width), y: Double(y0) / Double(height),
+               width: Double(self.width) / Double(width), height: Double(self.height) / Double(height))
+    }
+
+    func intersectionArea(_ other: Region) -> Int {
+        max(0, min(x1, other.x1) - max(x0, other.x0)) * max(0, min(y1, other.y1) - max(y0, other.y0))
     }
 }
 
@@ -76,8 +108,6 @@ private struct Cutter {
     /// Summed-area table of "this pixel is not background", so any row or column slice is counted in O(1).
     private let table: [Int32]
     private let minGutter: Int
-
-    private struct Region { var x0: Int, y0: Int, x1: Int, y1: Int }   // half-open
 
     init(page: GrayPage, background: UInt8, direction: ReadingDirection) {
         width = page.width; height = page.height; self.direction = direction
@@ -201,7 +231,7 @@ private struct Cutter {
         leaves.append(r)
     }
 
-    func panels() -> [CGRect] {
+    func regions() -> [Region] {
         var leaves: [Region] = []
         cut(Region(x0: 0, y0: 0, x1: width, y1: height), depth: 0, into: &leaves)
         // Drop page numbers, stray captions and specks.
@@ -212,9 +242,155 @@ private struct Cutter {
         // Too many pieces means we shredded a text page or a collage; too little coverage means we threw most of the page away.
         let coverage = kept.reduce(0.0) { $0 + Double(($1.x1 - $1.x0) * ($1.y1 - $1.y0)) } / Double(width * height)
         guard kept.count >= 2, kept.count <= 24, coverage >= 0.35 else { return [] }
-        return kept.map { r in
-            CGRect(x: Double(r.x0) / Double(width), y: Double(r.y0) / Double(height),
-                   width: Double(r.x1 - r.x0) / Double(width), height: Double(r.y1 - r.y0) / Double(height))
+        return kept
+    }
+}
+
+/// Finds framed panels: rectangles whose sides are straight edges in the artwork.
+private struct FrameFinder {
+    let width: Int, height: Int
+    let direction: ReadingDirection
+    /// vertical[x * (height + 1) + y] = number of "edge of a vertical line" pixels in column x above row y
+    /// (the edge map is widened by a pixel either side, so slightly wobbly borders still line up).
+    private let vertical: [Int32]
+    /// horizontal[y * (width + 1) + x] = the same along row y, left of column x.
+    private let horizontal: [Int32]
+
+    init(page: GrayPage, direction: ReadingDirection) {
+        width = page.width; height = page.height; self.direction = direction
+        let w = width, h = height, pixels = page.pixels, threshold = 24
+        var vEdge = [Bool](repeating: false, count: w * h), hEdge = [Bool](repeating: false, count: w * h)
+        for y in 1..<max(1, h - 1) {
+            for x in 1..<max(1, w - 1) {
+                let i = y * w + x
+                if abs(Int(pixels[i + 1]) - Int(pixels[i - 1])) >= threshold { vEdge[i] = true }
+                if abs(Int(pixels[i + w]) - Int(pixels[i - w])) >= threshold { hEdge[i] = true }
+            }
         }
+        var vertical = [Int32](repeating: 0, count: w * (h + 1)), horizontal = [Int32](repeating: 0, count: h * (w + 1))
+        for x in 0..<w {
+            var sum: Int32 = 0
+            for y in 0..<h {
+                let i = y * w + x
+                if vEdge[i] || (x > 0 && vEdge[i - 1]) || (x + 1 < w && vEdge[i + 1]) { sum += 1 }
+                vertical[x * (h + 1) + y + 1] = sum
+            }
+        }
+        for y in 0..<h {
+            var sum: Int32 = 0
+            for x in 0..<w {
+                let i = y * w + x
+                if hEdge[i] || (y > 0 && hEdge[i - w]) || (y + 1 < h && hEdge[i + w]) { sum += 1 }
+                horizontal[y * (w + 1) + x + 1] = sum
+            }
+        }
+        self.vertical = vertical; self.horizontal = horizontal
+    }
+
+    private func verticalEdges(x: Int, from y0: Int, to y1: Int) -> Int {
+        Int(vertical[x * (height + 1) + y1] - vertical[x * (height + 1) + y0])
+    }
+
+    private func horizontalEdges(y: Int, from x0: Int, to x1: Int) -> Int {
+        Int(horizontal[y * (width + 1) + x1] - horizontal[y * (width + 1) + x0])
+    }
+
+    /// How much of a side is a drawn edge (0…1), and how much more that is than the lines a few pixels either side of it.
+    private func side(vertical isVertical: Bool, at position: Int, from start: Int, to end: Int) -> (support: Double, standout: Double) {
+        let limit = isVertical ? width : height
+        func density(_ p: Int) -> Double {
+            guard p >= 0, p < limit else { return 0 }
+            return Double(isVertical ? verticalEdges(x: p, from: start, to: end) : horizontalEdges(y: p, from: start, to: end)) / Double(end - start)
+        }
+        let support = density(position)
+        return (support, support - (density(position - 6) + density(position + 6)) / 2)
+    }
+
+    /// Positions along one axis where a long straight edge runs: local peaks of the edge count, strongest first.
+    private func lines(in r: Region, vertical isVertical: Bool) -> [Int] {
+        let lower = isVertical ? r.x0 : r.y0, upper = isVertical ? r.x1 : r.y1
+        let minimum = (isVertical ? height : width) * 5 / 100
+        let counts = (lower..<upper).map { isVertical ? verticalEdges(x: $0, from: r.y0, to: r.y1) : horizontalEdges(y: $0, from: r.x0, to: r.x1) }
+        var peaks: [(position: Int, count: Int)] = []
+        for index in counts.indices where counts[index] >= minimum {
+            let before = index > 0 ? counts[index - 1] : -1, after = index + 1 < counts.count ? counts[index + 1] : -1
+            if counts[index] >= before, counts[index] > after { peaks.append((lower + index, counts[index])) }
+        }
+        let strongest = peaks.sorted { $0.count > $1.count }.prefix(40).map(\.position)
+        // The area's own edges can be sides too (a panel that bleeds off the page has no drawn border there).
+        return Array(Set(strongest + [lower, upper - 1])).sorted()
+    }
+
+    func frames(in r: Region) -> [Region] {
+        let xs = lines(in: r, vertical: true), ys = lines(in: r, vertical: false)
+        // Smaller rectangles than this are nearly always part of the scenery: signs, screens, windows.
+        let minWidth = max(8, width * 9 / 100), minHeight = max(8, height * 8 / 100), minArea = width * height * 4 / 100
+        let slack = 3
+        var found: [(region: Region, score: Double)] = []
+        for (i, left) in xs.enumerated() {
+            for right in xs[(i + 1)...] where right - left >= minWidth {
+                for (j, top) in ys.enumerated() {
+                    for bottom in ys[(j + 1)...] where bottom - top >= minHeight {
+                        let candidate = Region(x0: left, y0: top, x1: right + 1, y1: bottom + 1)
+                        guard candidate.area >= minArea, candidate.area * 100 < r.area * 90 else { continue }
+                        // How much of each side is a drawn edge. A side on the area's boundary needs none.
+                        let onBoundary = [left - r.x0 <= slack, r.x1 - 1 - right <= slack, top - r.y0 <= slack, r.y1 - 1 - bottom <= slack]
+                        let sides = [
+                            side(vertical: true, at: left, from: top, to: bottom), side(vertical: true, at: right, from: top, to: bottom),
+                            side(vertical: false, at: top, from: left, to: right), side(vertical: false, at: bottom, from: left, to: right),
+                        ]
+                        let drawn = zip(sides, onBoundary).filter { !$0.1 }.map(\.0)
+                        // One drawn line across an area is as likely a horizon or a table edge as a panel border.
+                        guard drawn.count >= 2 else { continue }
+                        // With only half of its outline drawn, that half has to be near-perfect.
+                        let each = drawn.count == 2 ? 0.9 : 0.7
+                        let mean = drawn.reduce(0) { $0 + $1.support } / Double(drawn.count)
+                        // "Standout" separates a border from hatching, rain or blinds, where every nearby line is an edge too.
+                        guard mean >= 0.86, drawn.allSatisfy({ $0.support >= each && $0.standout >= 0.4 }) else { continue }
+                        found.append((candidate, mean + Double(drawn.count) * 0.02))
+                    }
+                }
+            }
+        }
+        // Panels don't partly overlap. Going from the best-supported candidate down, drop any that cuts
+        // across one already kept — which also removes the repeats of a frame found on the inner and
+        // outer edge of its border. (One wholly inside another is dealt with below.)
+        var kept: [Region] = []
+        for candidate in found.sorted(by: { ($0.score, $0.region.area) > ($1.score, $1.region.area) }).map(\.region) {
+            let clashes = kept.contains { other in
+                let shared = candidate.intersectionArea(other), smaller = min(candidate.area, other.area)
+                return shared * 100 > smaller * 10 && (shared * 100 < smaller * 90 || shared * 100 > (candidate.area + other.area - shared) * 55)
+            }
+            if !clashes { kept.append(candidate) }
+            if kept.count > 60 { break }
+        }
+        // Two neighbouring frames also look like one big frame around both: drop those unions.
+        kept = kept.filter { candidate in
+            let inside = kept.filter { $0 != candidate && $0.area < candidate.area && $0.intersectionArea(candidate) * 100 >= $0.area * 90 }
+            return !(inside.count >= 2 && inside.reduce(0) { $0 + $1.area } * 100 >= candidate.area * 70)
+        }
+        // And a frame sitting inside another is a detail of it (a screen, a window, a caption box), not a panel.
+        kept = kept.filter { candidate in
+            !kept.contains { $0 != candidate && $0.area > candidate.area && $0.intersectionArea(candidate) * 100 >= candidate.area * 85 }
+        }
+        // A lone rectangle inside one panel of a grid is scenery; on a full page of artwork it can be an inset panel.
+        let isWholePage = r.area * 100 >= width * height * 85
+        guard kept.count >= (isWholePage ? 1 : 2), kept.count <= 16 else { return [] }
+        let covered = kept.reduce(0) { $0 + $1.area }
+        guard covered * 100 >= r.area * 8 else { return [] }
+        let ordered = inReadingOrder(kept)
+        // Frames that tile the area are its panels; frames floating on artwork come after a look at the whole.
+        return covered * 100 >= r.area * 72 ? (ordered.count >= 2 ? ordered : []) : [r] + ordered
+    }
+
+    /// Rows from the top; within a row, in the reading direction. A frame joins a row when its
+    /// vertical middle falls inside the row's first frame.
+    private func inReadingOrder(_ frames: [Region]) -> [Region] {
+        var rows: [[Region]] = []
+        for frame in frames.sorted(by: { ($0.y0, $0.x0) < ($1.y0, $1.x0) }) {
+            let middle = (frame.y0 + frame.y1) / 2
+            if let index = rows.firstIndex(where: { middle >= $0[0].y0 && middle < $0[0].y1 }) { rows[index].append(frame) } else { rows.append([frame]) }
+        }
+        return rows.flatMap { row in row.sorted { direction == .rightToLeft ? $0.x0 > $1.x0 : $0.x0 < $1.x0 } }
     }
 }
