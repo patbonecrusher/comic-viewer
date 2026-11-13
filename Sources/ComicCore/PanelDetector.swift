@@ -22,10 +22,16 @@ public enum PanelDetector {
     public static let wholePage = CGRect(x: 0, y: 0, width: 1, height: 1)
 
     public static func detect(in image: CGImage, direction: ReadingDirection = .leftToRight) -> [Panel] {
-        guard let page = GrayPage(image: image, longSide: 900) else { return [wholePage] }
+        // Gutters are cut on a larger copy of the page than frames are found on: some books set panels
+        // barely nine pixels apart on a 3000-pixel page, which blurs away to nothing at the smaller size.
+        guard let page = GrayPage(image: image, longSide: 900), let fine = GrayPage(image: image, longSide: 1500) else { return [wholePage] }
         let frames = FrameFinder(page: page, direction: direction)
-        for background in page.backgroundCandidates() {
-            let regions = Cutter(page: page, background: background, direction: direction).regions()
+        for background in fine.backgroundCandidates() {
+            let regions = Cutter(page: fine, background: background, direction: direction).regions().map { r in
+                Region(x0: r.x0 * page.width / fine.width, y0: r.y0 * page.height / fine.height,
+                       x1: max(r.x0 * page.width / fine.width + 1, r.x1 * page.width / fine.width),
+                       y1: max(r.y0 * page.height / fine.height + 1, r.y1 * page.height / fine.height))
+            }
             guard regions.count >= 2 else { continue }
             // Look for framed panels inside the bigger pieces the gutters left.
             let refined = regions.flatMap { region -> [Region] in
@@ -114,7 +120,7 @@ private struct Cutter {
 
     init(page: GrayPage, background: UInt8, direction: ReadingDirection) {
         width = page.width; height = page.height; self.direction = direction
-        minGutter = max(3, max(width, height) * 45 / 10_000)
+        minGutter = max(3, max(width, height) * 25 / 10_000)
         let tolerance = 28, strictTolerance = 8, stride = width + 1
         var table = [Int32](repeating: 0, count: stride * (height + 1)), strictTable = table
         for y in 0..<height {
@@ -173,7 +179,8 @@ private struct Cutter {
         }
         func isBusy(_ range: Range<Int>) -> Bool {
             let lines = range.clamped(to: 0..<inkPerLine.count)
-            return !lines.isEmpty && inkPerLine[lines].reduce(0, +) * 2 >= span * lines.count
+            // "Busy" allows for speech balloons, which sit on panel edges and are as white as the gutter.
+            return !lines.isEmpty && inkPerLine[lines].reduce(0, +) * 100 >= span * lines.count * 35
         }
         var cuts: [(Int, Int)] = []
         var start: Int?
