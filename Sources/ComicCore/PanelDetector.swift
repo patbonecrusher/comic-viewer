@@ -41,9 +41,19 @@ public enum PanelDetector {
             }
             return refined.map { $0.unit(width: page.width, height: page.height) }
         }
+        // No gutters at all. Look for frames within the printed area, leaving out the paper margin
+        // (a ruled line between panels runs the width of the artwork, not of the sheet).
         let whole = Region(x0: 0, y0: 0, x1: page.width, y1: page.height)
-        let inner = frames.frames(in: whole)
-        return inner.isEmpty ? [wholePage] : inner.map { $0.unit(width: page.width, height: page.height) }
+        var content = whole
+        if let background = fine.backgroundCandidates().first,
+           let box = Cutter(page: fine, background: background, direction: direction).contentBox() {
+            let scaled = Region(x0: box.x0 * page.width / fine.width, y0: box.y0 * page.height / fine.height,
+                                x1: box.x1 * page.width / fine.width, y1: box.y1 * page.height / fine.height)
+            if scaled.area * 2 >= whole.area { content = scaled }
+        }
+        let inner = frames.frames(in: content)
+        // The overview of a page is the page, margins and all.
+        return inner.isEmpty ? [wholePage] : inner.map { $0 == content ? wholePage : $0.unit(width: page.width, height: page.height) }
     }
 }
 
@@ -247,6 +257,9 @@ private struct Cutter {
         leaves.append(r)
     }
 
+    /// The page with its paper margins trimmed off.
+    func contentBox() -> Region? { trimmed(Region(x0: 0, y0: 0, x1: width, y1: height)) }
+
     func regions() -> [Region] {
         var leaves: [Region] = []
         cut(Region(x0: 0, y0: 0, x1: width, y1: height), depth: 0, into: &leaves)
@@ -374,11 +387,49 @@ private struct FrameFinder {
         return Array(Set(chosen.map { lower + $0 } + [lower, upper - 1])).sorted()
     }
 
-    func frames(in r: Region) -> [Region] {
+    /// Panels stacked or set side by side with only a ruled line between them: splits a large area along
+    /// drawn lines that run clean across it, edge to edge. Nil when there is no such line.
+    private func ruledPieces(of r: Region) -> [Region]? {
+        let pageArea = width * height
+        guard r.area * 100 >= pageArea * 30 else { return nil }      // in a small panel a clean line is a horizon or a tabletop
+        let slack = max(3, max(width, height) * 12 / 1000)
+        for isVertical in [false, true] {
+            let lower = isVertical ? r.x0 : r.y0, upper = isVertical ? r.x1 : r.y1
+            let from = isVertical ? r.y0 : r.x0, to = isVertical ? r.y1 - 1 : r.x1 - 1
+            var cuts: [Int] = []
+            for position in lines(in: r, vertical: isVertical) where position - lower > slack && upper - 1 - position > slack {
+                let line = side(vertical: isVertical, at: position, from: from, to: to)
+                if line.support >= 0.95, line.standout >= 0.5 { cuts.append(position) }
+            }
+            var pieces: [Region] = [], start = lower
+            for cut in cuts + [upper] {
+                let piece = isVertical ? Region(x0: start, y0: r.y0, x1: cut, y1: r.y1) : Region(x0: r.x0, y0: start, x1: r.x1, y1: cut)
+                // A sliver means the "line" was one side of a thick border; fold it into the next piece.
+                if piece.area * 100 >= pageArea * 10 || cut == upper { pieces.append(piece); start = cut }
+            }
+            if let last = pieces.last, pieces.count >= 2, last.area * 100 < pageArea * 10 {
+                pieces.removeLast()
+                let previous = pieces.removeLast()
+                pieces.append(Region(x0: previous.x0, y0: previous.y0, x1: last.x1, y1: last.y1))
+            }
+            if pieces.count >= 2 { return isVertical && direction == .rightToLeft ? pieces.reversed() : pieces }
+        }
+        return nil
+    }
+
+    func frames(in r: Region, depth: Int = 0) -> [Region] {
+        if depth < 3, let pieces = ruledPieces(of: r) {
+            return pieces.flatMap { piece -> [Region] in
+                let inner = frames(in: piece, depth: depth + 1)
+                return inner.isEmpty ? [piece] : inner
+            }
+        }
         let xs = lines(in: r, vertical: true), ys = lines(in: r, vertical: false)
         // Smaller rectangles than this are nearly always part of the scenery: signs, screens, windows.
         let minWidth = max(8, width * 9 / 100), minHeight = max(8, height * 8 / 100), minArea = width * height * 4 / 100
-        let slack = 3
+        // The area is itself a panel, with its own border just inside its edge. Lines that close to the
+        // edge are that border, not the side of a panel within, so they count as "on the boundary".
+        let slack = max(3, max(width, height) * 12 / 1000)
         typealias Side = (support: Double, standout: Double)
         // A side on the area's boundary needs no drawn edge (nil). "Standout" separates a border from
         // hatching, rain or blinds, where every nearby line is an edge too.
@@ -469,7 +520,10 @@ private struct FrameFinder {
         if covered * 100 >= r.area * 72 { return ordered.count >= 2 ? ordered : [] }
         // Frames floating on artwork come after a look at the whole — but only where the area is most of a
         // page. Inside one panel of a grid, stray rectangles are scenery (a doorway, a screen, a window).
-        return r.area * 2 >= width * height ? [r] + ordered : []
+        if r.area * 2 >= width * height { return [r] + ordered }
+        // A wide panel with a couple of substantial insets is the in-between case.
+        let substantial = kept.count >= 2 && kept.allSatisfy { $0.area * 100 >= r.area * 12 } && covered * 100 >= r.area * 30
+        return r.area * 100 >= width * height * 30 && substantial ? [r] + ordered : []
     }
 
     /// Rows from the top; within a row, in the reading direction. A frame joins a row when its
