@@ -151,6 +151,15 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertEqual([result.added, result.updated, result.removed], [0, 0, 1])
         XCTAssertEqual(store.books().map(\.page), [2])
 
+        // Hand-drawn panels are kept per page, can mean "whole page", and can be cleared.
+        let id = store.books()[0].id!
+        let drawn = [CGRect(x: 0.1, y: 0.1, width: 0.5, height: 0.25), CGRect(x: 0.1, y: 0.4, width: 0.8, height: 0.5)]
+        store.setPanelOverride(drawn, bookID: id, page: 1)
+        store.setPanelOverride([], bookID: id, page: 2)
+        XCTAssertEqual(store.panelOverrides(bookID: id), [1: drawn, 2: []])
+        store.setPanelOverride(nil, bookID: id, page: 1)
+        XCTAssertEqual(store.panelOverrides(bookID: id), [2: []])
+
         try store.removeFolder(id: folder.id!)
         XCTAssertTrue(store.books().isEmpty)
     }

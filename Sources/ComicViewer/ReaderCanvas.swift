@@ -9,6 +9,9 @@ struct ReaderCanvas: NSViewRepresentable {
     let display: SpreadDisplay?
     let fit: FitMode
     let focus: PanelFocus?
+    /// Non-nil while the reader is editing panels.
+    let editPanels: [CGRect]?
+    let editSelection: Int?
     let startAtRightEdge: Bool
     let background: NSColor
 
@@ -18,6 +21,13 @@ struct ReaderCanvas: NSViewRepresentable {
         view.onStep = { [weak model] forward in forward ? model?.next() : model?.previous() }
         view.onJump = { [weak model] toEnd in toEnd ? model?.last() : model?.first() }
         view.onFitChanged = { [weak model] in model?.setFit($0) }
+        view.onEditKey = { [weak model] key in
+            switch key {
+            case .delete: model?.deleteSelectedPanel()
+            case .done: model?.togglePanelEditing()
+            }
+        }
+        view.spreadView.editor.onChange = { [weak model] panels, selection in model?.panelsEdited(panels, selection: selection) }
         model.canvas = view
         return view
     }
@@ -35,6 +45,14 @@ struct ReaderCanvas: NSViewRepresentable {
         } else if view.focus != focus {
             view.setFocus(focus, animated: true)
         }
+        let editor = view.spreadView.editor
+        if editor.isHidden != (editPanels == nil) {
+            editor.isHidden = editPanels == nil
+            // Editing happens on the whole page.
+            if editPanels != nil, view.fit == .custom { view.applyFit(as: .page) }
+        }
+        editor.panels = editPanels ?? []
+        editor.selection = editSelection
     }
 }
 
@@ -50,6 +68,9 @@ final class ReaderScrollView: NSScrollView {
     var onStep: ((Bool) -> Void)?           // true = forward in reading order
     var onJump: ((Bool) -> Void)?           // true = last page
     var onFitChanged: ((FitMode) -> Void)?
+    enum EditKey { case delete, done }
+    var onEditKey: ((EditKey) -> Void)?
+    private var isEditing: Bool { !spreadView.editor.isHidden }
 
     private var lastFittedSize = NSSize.zero
     private var swipeDistance: CGFloat = 0
@@ -211,6 +232,13 @@ final class ReaderScrollView: NSScrollView {
 
     private func handleKey(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+        if isEditing {
+            switch event.keyCode {
+            case 51, 117: onEditKey?(.delete); return true      // delete, forward delete
+            case 36, 53, 76: onEditKey?(.done); return true     // return, escape, enter
+            default: break
+            }
+        }
         switch event.keyCode {
         case 123: onTurn?(-1)                                               // ←
         case 124: onTurn?(1)                                                // →
@@ -284,7 +312,7 @@ final class ReaderScrollView: NSScrollView {
 
     override func mouseUp(with event: NSEvent) {
         defer { mouseDownPoint = nil }
-        guard mouseDownPoint != nil, !dragged else { return }
+        guard mouseDownPoint != nil, !dragged, !isEditing else { return }
         let x = convert(event.locationInWindow, from: nil).x / max(1, bounds.width)
         if x < 0.3 { onTurn?(-1) } else if x > 0.7 { onTurn?(1) }
     }
@@ -317,6 +345,14 @@ final class SpreadView: NSView {
 
     private let pages = CALayer()
     private let shade = CAShapeLayer()
+    /// The panel-editing overlay; hidden unless editing.
+    let editor = PanelEditorView()
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        editor.frame = bounds
+        editor.needsDisplay = true
+    }
 
     /// Covers everything except `rect` (in this view's coordinates) so one panel stands alone; nil clears it.
     func dim(around rect: NSRect?, color: NSColor, animated: Bool) {
@@ -348,6 +384,8 @@ final class SpreadView: NSView {
             layer?.masksToBounds = false
             layer?.addSublayer(pages)
             layer?.addSublayer(shade)
+            editor.isHidden = true
+            addSubview(editor)
         }
         pages.sublayers?.forEach { $0.removeFromSuperlayer() }
         guard !images.isEmpty else { return setFrameSize(.zero) }

@@ -28,6 +28,12 @@ final class ReaderModel {
     private(set) var panels: [CGRect] = []
     private(set) var panelIndex = 0
     private(set) var focus: PanelFocus?
+
+    /// Panel editing: the page is shown whole with its panels drawn over it, to fix what detection got wrong.
+    private(set) var isEditingPanels = false
+    /// The panels being edited, in reading order, in the spread's unit coordinates.
+    private(set) var editPanels: [CGRect] = []
+    var editSelection: Int?
     private(set) var spreads: [Spread]
     private(set) var spreadIndex = 0
     private(set) var display: SpreadDisplay?
@@ -38,6 +44,11 @@ final class ReaderModel {
     @ObservationIgnored private var focusCounter = 0
     @ObservationIgnored private var enterAtLastPanel = false
     @ObservationIgnored private var panelCache: [Int: [CGRect]] = [:]
+    /// Pages whose panels were drawn by hand (page unit coordinates); these win over detection.
+    @ObservationIgnored private var customPanels: [Int: [CGRect]] = [:]
+    @ObservationIgnored private var editDirty = false
+    /// Where each page of the current spread sits across its width: (page, left edge, share), left to right.
+    @ObservationIgnored private var spreadGeometry: [(page: Int, offset: CGFloat, share: CGFloat)] = []
     @ObservationIgnored private var sizesScanned = false
     @ObservationIgnored private var inFlight: [Int: Task<CGImage?, Never>] = [:]
     @ObservationIgnored private let pageCache = NSCache<NSNumber, ImageBox>()
@@ -60,6 +71,7 @@ final class ReaderModel {
         direction = saved?.direction.flatMap(ReadingDirection.init(rawValue:)) ?? Prefs.defaultDirection
         fit = Prefs.defaultFit
         panelMode = saved?.panelMode ?? false
+        if let id = saved?.id, let store = Library.shared.store { customPanels = store.panelOverrides(bookID: id) }
         pageCache.countLimit = 10
         thumbnailCache.countLimit = 600
         spreads = SpreadBuilder.spreads(pageCount: book.pageCount, layout: .single) { _ in false }
@@ -81,12 +93,14 @@ final class ReaderModel {
         let pages = currentPages
         guard let first = pages.first, let last = pages.last else { return "" }
         let page = first == last ? "Page \(first + 1) of \(book.pageCount)" : "Pages \(first + 1)–\(last + 1) of \(book.pageCount)"
+        if isEditingPanels { return "\(page) · Editing \(editPanels.count) panel\(editPanels.count == 1 ? "" : "s")" }
         return panelMode && panels.count > 1 ? "\(page) · Panel \(panelIndex + 1) of \(panels.count)" : page
     }
 
     func goToSpread(_ index: Int) {
         let clamped = max(0, min(spreads.count - 1, index))
         guard clamped != spreadIndex else { return }
+        commitPanelEdits()      // turning the page while editing keeps the work and carries on with the next page
         spreadIndex = clamped
         showCurrent()
         saveProgress()
@@ -94,13 +108,13 @@ final class ReaderModel {
 
     /// Forward one step: the next panel in panel mode, otherwise the next page.
     func next() {
-        if panelMode, panelIndex + 1 < panels.count { return showPanel(panelIndex + 1) }
+        if panelMode, !isEditingPanels, panelIndex + 1 < panels.count { return showPanel(panelIndex + 1) }
         goToSpread(spreadIndex + 1)
     }
 
     func previous() {
-        if panelMode, panelIndex > 0 { return showPanel(panelIndex - 1) }
-        enterAtLastPanel = panelMode && canGoBack
+        if panelMode, !isEditingPanels, panelIndex > 0 { return showPanel(panelIndex - 1) }
+        enterAtLastPanel = panelMode && !isEditingPanels && canGoBack
         goToSpread(spreadIndex - 1)
     }
     func first() { goToSpread(0) }
@@ -136,6 +150,7 @@ final class ReaderModel {
     }
 
     private func layoutChanged() {
+        commitPanelEdits()
         rebuildSpreads(keeping: currentPage)
         showCurrent()
         saveProgress()
@@ -143,6 +158,7 @@ final class ReaderModel {
     }
 
     private func directionChanged() {
+        commitPanelEdits()
         panelCache.removeAll()      // panel order depends on the reading direction
         showCurrent()
         saveProgress()
@@ -183,10 +199,16 @@ final class ReaderModel {
             }
             guard token == generation else { return }
             // In panel mode the page and its first panel appear together, so find the panels first.
-            let found = panelMode ? await spreadPanels(pages: ordered, images: images) : []
+            let found = panelMode || isEditingPanels ? await spreadPanels(pages: ordered, images: images) : []
             guard token == generation else { return }
             pageError = nil
             panels = found
+            if isEditingPanels {
+                // A page shown whole has nothing to adjust: start it with no panels rather than one giant one.
+                editPanels = found.count == 1 && isWholeSpread(found[0]) ? [] : found
+                editSelection = nil
+                editDirty = false
+            }
             panelIndex = enterAtLastPanel ? max(0, found.count - 1) : 0
             enterAtLastPanel = false
             updateFocus()
@@ -236,7 +258,7 @@ final class ReaderModel {
 
     private func updateFocus() {
         // A page that is one big panel is simply shown whole.
-        guard panelMode, panels.count > 1, panels.indices.contains(panelIndex) else { return focus = nil }
+        guard panelMode, !isEditingPanels, panels.count > 1, panels.indices.contains(panelIndex) else { return focus = nil }
         focusCounter += 1
         focus = PanelFocus(id: focusCounter, rect: panels[panelIndex])
     }
@@ -247,6 +269,7 @@ final class ReaderModel {
         let direction = direction
         var perPage: [[CGRect]] = []
         for (page, image) in zip(pages, images) {
+            if let custom = customPanels[page] { perPage.append(custom.isEmpty ? [PanelDetector.wholePage] : custom); continue }
             if let cached = panelCache[page] { perPage.append(cached); continue }
             let found = await Task.detached(priority: .userInitiated) { PanelDetector.detect(in: image, direction: direction) }.value
             panelCache[page] = found
@@ -257,13 +280,86 @@ final class ReaderModel {
         let total = widths.reduce(0, +)
         var result: [[CGRect]] = []
         var offset: CGFloat = 0
+        spreadGeometry = []
         for (index, found) in perPage.enumerated() {
             let share = widths[index] / total
+            spreadGeometry.append((pages[index], offset, share))
             result.append(found.map { CGRect(x: offset + $0.minX * share, y: $0.minY, width: $0.width * share, height: $0.height) })
             offset += share
         }
         // Read the right-hand page first in a right-to-left book.
         return (direction == .rightToLeft ? result.reversed() : result).flatMap { $0 }
+    }
+
+    // MARK: - Editing panels
+
+    private func isWholeSpread(_ rect: CGRect) -> Bool {
+        rect.minX < 0.01 && rect.minY < 0.01 && rect.width > 0.98 && rect.height > 0.98
+    }
+
+    func togglePanelEditing() {
+        if isEditingPanels {
+            commitPanelEdits()
+            isEditingPanels = false
+        } else {
+            isEditingPanels = true
+        }
+        showCurrent()
+    }
+
+    /// Called as the reader draws, moves, resizes, reorders or deletes panels.
+    func panelsEdited(_ panels: [CGRect], selection: Int?) {
+        if panels != editPanels { editPanels = panels; editDirty = true }
+        editSelection = selection
+    }
+
+    func deleteSelectedPanel() {
+        guard let index = editSelection, editPanels.indices.contains(index) else { return }
+        var panels = editPanels
+        panels.remove(at: index)
+        panelsEdited(panels, selection: panels.isEmpty ? nil : min(index, panels.count - 1))
+    }
+
+    func movePanels(from source: IndexSet, to destination: Int) {
+        var panels = editPanels
+        let moving = source.map { panels[$0] }
+        // Same arithmetic as Array.move(fromOffsets:toOffset:), which lives in SwiftUI.
+        let before = source.filter { $0 < destination }.count
+        for index in source.reversed() { panels.remove(at: index) }
+        panels.insert(contentsOf: moving, at: destination - before)
+        panelsEdited(panels, selection: nil)
+    }
+
+    func removeAllPanels() { panelsEdited([], selection: nil) }
+
+    /// Throws away hand-drawn panels for the pages on screen and detects them again.
+    func redetectPanels() {
+        for page in currentPages {
+            customPanels[page] = nil
+            panelCache[page] = nil
+            if let recordID { Library.shared.store?.setPanelOverride(nil, bookID: recordID, page: page) }
+        }
+        editDirty = false
+        showCurrent()
+    }
+
+    /// Saves the edited panels, page by page. A page left with no panels is shown whole from now on.
+    func commitPanelEdits() {
+        guard isEditingPanels, editDirty, !spreadGeometry.isEmpty else { return }
+        editDirty = false
+        var perPage: [Int: [CGRect]] = [:]
+        for geometry in spreadGeometry { perPage[geometry.page] = [] }
+        for rect in editPanels {
+            // A panel belongs to the page its centre is on, and is clipped to that page.
+            guard let home = spreadGeometry.first(where: { rect.midX >= $0.offset && rect.midX <= $0.offset + $0.share }) ?? spreadGeometry.last else { continue }
+            let local = CGRect(x: (rect.minX - home.offset) / home.share, y: rect.minY, width: rect.width / home.share, height: rect.height)
+                .intersection(PanelDetector.wholePage)
+            if !local.isNull, local.width > 0.01, local.height > 0.01 { perPage[home.page, default: []].append(local) }
+        }
+        for (page, panels) in perPage {
+            customPanels[page] = panels
+            if let recordID { Library.shared.store?.setPanelOverride(panels, bookID: recordID, page: page) }
+        }
     }
 
     // MARK: - Zoom

@@ -85,6 +85,7 @@ final class ReaderWindows {
         }
         center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self, weak model] _ in
             MainActor.assumeIsolated {
+                model?.commitPanelEdits()
                 model?.saveProgress()
                 if self?.active === model { self?.active = nil }
                 self?.open[key] = nil

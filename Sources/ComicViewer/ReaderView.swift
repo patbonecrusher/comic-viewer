@@ -17,6 +17,7 @@ struct ReaderView: View {
             VStack(spacing: 0) {
                 ZStack {
                     ReaderCanvas(model: model, display: model.display, fit: model.fit, focus: model.focus,
+                                 editPanels: model.isEditingPanels ? model.editPanels : nil, editSelection: model.editSelection,
                                  startAtRightEdge: model.direction == .rightToLeft,
                                  background: (ReaderBackground(rawValue: background) ?? .dark).color)
                     if let error = model.pageError {
@@ -29,6 +30,11 @@ struct ReaderView: View {
                     Divider()
                     statusBar
                 }
+            }
+            if model.isEditingPanels {
+                Divider()
+                PanelEditorSidebar(model: model)
+                    .frame(width: 230)
             }
         }
         .frame(minWidth: 480, minHeight: 360)
@@ -82,6 +88,12 @@ struct ReaderView: View {
                 .help("Read one panel at a time")
         }
         ToolbarItem {
+            Toggle(isOn: Binding(get: { model.isEditingPanels }, set: { _ in model.togglePanelEditing() })) {
+                Label("Edit Panels", systemImage: "square.dashed")
+            }
+            .help("Fix the panels on this page: draw, move, resize, reorder")
+        }
+        ToolbarItem {
             Menu {
                 Picker("Zoom", selection: Binding(get: { model.fit }, set: { model.setFit($0) })) {
                     ForEach(FitMode.selectable, id: \.self) { Text($0.title).tag($0) }
@@ -96,6 +108,64 @@ struct ReaderView: View {
             }
             .help("Zoom and reading direction")
         }
+    }
+}
+
+/// The list beside the page while editing panels: reading order, reordering and the page-level actions.
+private struct PanelEditorSidebar: View {
+    @Bindable var model: ReaderModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Panels").font(.headline)
+                Text("Drag on the page to add a panel. Drag a panel to move it, or its handles to resize. Drag rows here to change the reading order.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            Divider()
+            if model.editPanels.isEmpty {
+                ContentUnavailableView("No Panels", systemImage: "rectangle.dashed",
+                                       description: Text("This page is shown whole in panel mode."))
+                    .frame(maxHeight: .infinity)
+            } else {
+                List(selection: $model.editSelection) {
+                    ForEach(Array(model.editPanels.enumerated()), id: \.offset) { index, _ in
+                        HStack {
+                            Image(systemName: "\(index + 1).circle.fill").foregroundStyle(.tint)
+                            Text("Panel \(index + 1)")
+                            Spacer()
+                            Button {
+                                model.editSelection = index
+                                model.deleteSelectedPanel()
+                            } label: { Label("Delete Panel \(index + 1)", systemImage: "trash").labelStyle(.iconOnly) }
+                                .buttonStyle(.borderless)
+                                .help("Delete this panel")
+                        }
+                        .tag(index)
+                    }
+                    .onMove { model.movePanels(from: $0, to: $1) }
+                }
+                .listStyle(.inset)
+            }
+            Divider()
+            VStack(spacing: 8) {
+                HStack {
+                    Button("Detect Again") { model.redetectPanels() }
+                        .help("Discard changes to this page and find its panels automatically")
+                    Button("Clear") { model.removeAllPanels() }
+                        .help("Remove all panels, so this page is shown whole")
+                        .disabled(model.editPanels.isEmpty)
+                }
+                Button { model.togglePanelEditing() } label: { Text("Done").frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.regular)
+            .padding(12)
+        }
+        .background(.background.secondary)
     }
 }
 

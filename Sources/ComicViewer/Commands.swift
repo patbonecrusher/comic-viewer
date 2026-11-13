@@ -38,6 +38,9 @@ struct AppCommands: Commands {
             Toggle("Panel by Panel", isOn: Binding(get: { reader?.panelMode ?? false }, set: { reader?.panelMode = $0 }))
                 .keyboardShortcut("p", modifiers: [.command, .shift])
                 .disabled(reader == nil)
+            Toggle("Edit Panels", isOn: Binding(get: { reader?.isEditingPanels ?? false }, set: { _ in reader?.togglePanelEditing() }))
+                .keyboardShortcut("e")
+                .disabled(reader == nil)
             Picker("Reading Direction", selection: Binding(get: { reader?.direction ?? .leftToRight }, set: { reader?.direction = $0 })) {
                 ForEach(ReadingDirection.allCases, id: \.self) { Text($0.title).tag($0) }
             }

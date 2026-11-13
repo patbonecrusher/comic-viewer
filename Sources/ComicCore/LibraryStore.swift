@@ -104,6 +104,15 @@ public final class LibraryStore: @unchecked Sendable {
                 t.column("panelMode", .boolean)
             }
         }
+        migrator.registerMigration("v2-panels") { db in
+            // Panels the reader drew by hand for a page, replacing automatic detection.
+            try db.create(table: "panelOverride") { t in
+                t.column("bookID", .integer).notNull().references("book", onDelete: .cascade)
+                t.column("page", .integer).notNull()
+                t.column("rects", .text).notNull()       // JSON [[x, y, width, height], …] in page unit coordinates
+                t.primaryKey(["bookID", "page"])
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -203,6 +212,32 @@ public final class LibraryStore: @unchecked Sendable {
               let destination = CGImageDestinationCreateWithURL(coverURL(for: id) as CFURL, "public.jpeg" as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
         CGImageDestinationFinalize(destination)
+    }
+
+    // MARK: Hand-drawn panels
+
+    /// Pages of a comic whose panels were set by hand, in reading order. An empty list means "show this page whole".
+    public func panelOverrides(bookID: Int64) -> [Int: [CGRect]] {
+        let rows = (try? database.read { try Row.fetchAll($0, sql: "SELECT page, rects FROM panelOverride WHERE bookID = ?", arguments: [bookID]) }) ?? []
+        var result: [Int: [CGRect]] = [:]
+        for row in rows {
+            let page: Int = row["page"], json: String = row["rects"]
+            guard let values = try? JSONDecoder().decode([[Double]].self, from: Data(json.utf8)) else { continue }
+            result[page] = values.filter { $0.count == 4 }.map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
+        }
+        return result
+    }
+
+    /// Saves hand-drawn panels for a page; nil goes back to automatic detection.
+    public func setPanelOverride(_ panels: [CGRect]?, bookID: Int64, page: Int) {
+        try? database.write { db in
+            guard let panels else {
+                return try db.execute(sql: "DELETE FROM panelOverride WHERE bookID = ? AND page = ?", arguments: [bookID, page])
+            }
+            let values = panels.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] }
+            let json = String(decoding: try JSONEncoder().encode(values), as: UTF8.self)
+            try db.execute(sql: "INSERT OR REPLACE INTO panelOverride (bookID, page, rects) VALUES (?, ?, ?)", arguments: [bookID, page, json])
+        }
     }
 
     // MARK: Scanning
