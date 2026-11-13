@@ -1,0 +1,30 @@
+# Releasing Comic Viewer
+
+Bundle ID `com.patlaplante.ComicViewer`. Everything is driven by `build.sh`; see `./build.sh --help`. Personal settings (`TEAM_ID`, `ASC_KEY_ID`,
+`ASC_ISSUER_ID`, `TAP_DIR`) come from `~/.config/mac-app-kit/defaults.env` or `./.release.env` (git-ignored).
+
+## Direct download (Developer ID + notarization) and Homebrew
+
+```sh
+Tools/release.sh                              # notarized universal zip → GitHub release → cask update in the tap
+```
+
+Needs a *Developer ID Application* certificate in the keychain and the Homebrew tap checked out at `$TAP_DIR`. Install: `brew install --cask patbonecrusher/tap/comic-viewer`.
+
+## Mac App Store
+
+One-time: *Apple Distribution* + *Mac Installer Distribution* certs, App ID, Mac App Store provisioning profile at
+`Resources/ComicViewer.provisionprofile` (git-ignored), app record in App Store Connect, API key.
+
+```sh
+# bump CFBundleVersion (must strictly increase) in Resources/Info.plist, then:
+./build.sh --universal --sign appstore --pkg --upload
+Tools/asc.py all        # metadata (Marketing/listing.json), screenshots (Marketing/screenshot-*.png), price, review contact, build
+Tools/asc.py submit
+```
+
+App Privacy has no public API: App Store Connect → App Privacy → Get Started → answer → **Publish** (the Publish button matters).
+
+Notes: `build.sh` signs with the certificate embedded in the provisioning profile (App Store Connect rejects any other),
+strips extended attributes before signing (ITMS-91109), and distribution-signed builds cannot be launched locally —
+use `--sign dev` for local testing and screenshots.
