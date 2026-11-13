@@ -27,11 +27,21 @@ protocol PageSource: AnyObject {
     /// Pixel size of the page without decoding it.
     func pageSize(at index: Int) throws -> CGSize
     /// A non-page file stored with the comic, such as ComicInfo.xml. Matched on file name, ignoring case.
-    func sidecar(named name: String) -> Data?
+    func sidecar(where matches: (String) -> Bool) -> Data?
+    /// Whether extra files can be saved alongside the pages (a CBZ or a folder; not CBR or PDF).
+    var canWriteSidecars: Bool { get }
+    /// Adds or replaces a non-page file stored with the comic.
+    func writeSidecar(named name: String, data: Data) throws
 }
 
 extension PageSource {
-    func sidecar(named name: String) -> Data? { nil }
+    func sidecar(where matches: (String) -> Bool) -> Data? { nil }
+    var canWriteSidecars: Bool { false }
+    func writeSidecar(named name: String, data: Data) throws { throw ComicError.unsupportedFormat("saving into this kind of file") }
+
+    func sidecar(named name: String) -> Data? {
+        sidecar { ($0 as NSString).lastPathComponent.caseInsensitiveCompare(name) == .orderedSame }
+    }
 }
 
 /// A source whose pages are encoded image files (everything except PDF).

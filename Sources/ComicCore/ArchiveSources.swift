@@ -4,12 +4,14 @@ import ZIPFoundation
 
 /// CBZ / ZIP.
 final class ZipSource: DataPageSource {
-    private let archive: ZIPFoundation.Archive
-    private let entries: [ZIPFoundation.Entry]
-    private let others: [ZIPFoundation.Entry]
+    private let url: URL
+    private var archive: ZIPFoundation.Archive
+    private var entries: [ZIPFoundation.Entry]
+    private var others: [ZIPFoundation.Entry]
     private let lock = NSLock()          // ZIPFoundation archives aren't thread-safe
 
     init(url: URL) throws {
+        self.url = url
         do { archive = try ZIPFoundation.Archive(url: url, accessMode: .read) }
         catch { throw ComicError.unreadableFile(error.localizedDescription) }
         let files = archive.filter { $0.type == .file }
@@ -18,20 +20,42 @@ final class ZipSource: DataPageSource {
         if entries.isEmpty { throw ComicError.noPages }
     }
 
-    var pageCount: Int { entries.count }
-    func pageName(at index: Int) -> String { entries[index].path }
-    func data(at index: Int) throws -> Data { try extract(entries[index]) }
+    var canWriteSidecars: Bool { FileManager.default.isWritableFile(atPath: url.path) }
 
-    func sidecar(named name: String) -> Data? {
-        guard let entry = others.first(where: { ($0.path as NSString).lastPathComponent.caseInsensitiveCompare(name) == .orderedSame }),
-              entry.uncompressedSize < 4_000_000 else { return nil }
+    func writeSidecar(named name: String, data: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        do {
+            let writable = try ZIPFoundation.Archive(url: url, accessMode: .update)
+            if let existing = writable[name] { try writable.remove(existing) }
+            try writable.addEntry(with: name, type: .file, uncompressedSize: Int64(data.count), compressionMethod: .deflate) { position, size in
+                data.subdata(in: Int(position)..<Int(position) + size)
+            }
+        }
+        // The file's directory has moved: read it again. Pages keep their order.
+        archive = try ZIPFoundation.Archive(url: url, accessMode: .read)
+        let files = archive.filter { $0.type == .file }
+        entries = PageNames.sortedPages(files, path: \.path)
+        others = files.filter { !PageNames.isPage($0.path) }
+    }
+
+    var pageCount: Int { entries.count }
+    func pageName(at index: Int) -> String { lock.lock(); defer { lock.unlock() }; return entries[index].path }
+
+    func data(at index: Int) throws -> Data {
+        lock.lock(); defer { lock.unlock() }
+        return try extract(entries[index])
+    }
+
+    func sidecar(where matches: (String) -> Bool) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        guard let entry = others.first(where: { matches($0.path) }), entry.uncompressedSize < 8_000_000 else { return nil }
         return try? extract(entry)
     }
 
+    /// Call with the lock held.
     private func extract(_ entry: ZIPFoundation.Entry) throws -> Data {
         var data = Data()
         data.reserveCapacity(Int(entry.uncompressedSize))
-        lock.lock(); defer { lock.unlock() }
         _ = try archive.extract(entry, skipCRC32: true) { data.append($0) }
         return data
     }
@@ -62,11 +86,10 @@ final class RarSource: DataPageSource {
         return try archive.extract(entries[index])
     }
 
-    func sidecar(named name: String) -> Data? {
+    func sidecar(where matches: (String) -> Bool) -> Data? {
         // RAR paths may use either separator.
-        guard let entry = others.first(where: {
-            ($0.fileName.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent.caseInsensitiveCompare(name) == .orderedSame
-        }), entry.uncompressedSize < 4_000_000 else { return nil }
+        guard let entry = others.first(where: { matches($0.fileName.replacingOccurrences(of: "\\", with: "/")) }),
+              entry.uncompressedSize < 8_000_000 else { return nil }
         lock.lock(); defer { lock.unlock() }
         return try? archive.extract(entry)
     }
@@ -90,5 +113,12 @@ final class FolderSource: DataPageSource {
     var pageCount: Int { files.count }
     func pageName(at index: Int) -> String { files[index].lastPathComponent }
     func data(at index: Int) throws -> Data { try Data(contentsOf: files[index], options: .mappedIfSafe) }
-    func sidecar(named name: String) -> Data? { try? Data(contentsOf: root.appendingPathComponent(name)) }
+
+    func sidecar(where matches: (String) -> Bool) -> Data? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        return names.first(where: matches).flatMap { try? Data(contentsOf: root.appendingPathComponent($0)) }
+    }
+
+    var canWriteSidecars: Bool { FileManager.default.isWritableFile(atPath: root.path) }
+    func writeSidecar(named name: String, data: Data) throws { try data.write(to: root.appendingPathComponent(name), options: .atomic) }
 }

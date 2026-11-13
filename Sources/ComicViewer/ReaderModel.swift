@@ -47,6 +47,9 @@ final class ReaderModel {
     /// Pages whose panels were drawn by hand (page unit coordinates); these win over detection.
     @ObservationIgnored private var customPanels: [Int: [CGRect]] = [:]
     @ObservationIgnored private var editDirty = false
+    /// Pages whose panels from the file were discarded this session ("Detect Again").
+    @ObservationIgnored private var ignoredEmbedded: Set<Int> = []
+    @ObservationIgnored private var fileSavePending = false
     /// Where each page of the current spread sits across its width: (page, left edge, share), left to right.
     @ObservationIgnored private var spreadGeometry: [(page: Int, offset: CGFloat, share: CGFloat)] = []
     @ObservationIgnored private var sizesScanned = false
@@ -271,6 +274,15 @@ final class ReaderModel {
         for (page, image) in zip(pages, images) {
             if let custom = customPanels[page] { perPage.append(custom.isEmpty ? [PanelDetector.wholePage] : custom); continue }
             if let cached = panelCache[page] { perPage.append(cached); continue }
+            // Panels that came inside the file (saved by Comic Viewer elsewhere, or ACBF frames) beat detection.
+            let book = book
+            if !ignoredEmbedded.contains(page),
+               let embedded = await Task.detached(priority: .userInitiated, operation: { book.embeddedPanels(forPage: page) }).value {
+                let panels = embedded.isEmpty ? [PanelDetector.wholePage] : embedded
+                panelCache[page] = panels
+                perPage.append(panels)
+                continue
+            }
             let found = await Task.detached(priority: .userInitiated) { PanelDetector.detect(in: image, direction: direction) }.value
             panelCache[page] = found
             perPage.append(found)
@@ -301,6 +313,7 @@ final class ReaderModel {
         if isEditingPanels {
             commitPanelEdits()
             isEditingPanels = false
+            savePanelsToFile()
         } else {
             isEditingPanels = true
         }
@@ -337,8 +350,10 @@ final class ReaderModel {
         for page in currentPages {
             customPanels[page] = nil
             panelCache[page] = nil
+            ignoredEmbedded.insert(page)
             if let recordID { Library.shared.store?.setPanelOverride(nil, bookID: recordID, page: page) }
         }
+        fileSavePending = true
         editDirty = false
         showCurrent()
     }
@@ -359,6 +374,40 @@ final class ReaderModel {
         for (page, panels) in perPage {
             customPanels[page] = panels
             if let recordID { Library.shared.store?.setPanelOverride(panels, bookID: recordID, page: page) }
+        }
+        fileSavePending = true
+    }
+
+    /// Writes every hand-set panel into the comic file, if the reader wants that and the format allows it,
+    /// so the edits travel with the comic. Asks once, the first time there is something to save.
+    func savePanelsToFile() {
+        guard fileSavePending, book.canStorePanels else { return }
+        if Prefs.panelStorageChoice == .ask {
+            let alert = NSAlert()
+            alert.messageText = "Save panel edits inside the comic file too?"
+            alert.informativeText = "Comic Viewer always remembers your panel edits itself. It can also store them in the comic, as a small file inside the CBZ (or in the folder), so they come along if you move or copy the comic.\n\nThis changes the comic file. Its pages are not touched. You can change your mind in Settings."
+            alert.addButton(withTitle: "Save in Comic File")
+            alert.addButton(withTitle: "Keep in Comic Viewer Only")
+            Prefs.panelStorageChoice = alert.runModal() == .alertFirstButtonReturn ? .file : .app
+        }
+        fileSavePending = false
+        guard Prefs.panelStorageChoice == .file else { return }
+        // What the file already holds, with this session's discards removed and everything set here on top.
+        let book = book, custom = customPanels, ignored = ignoredEmbedded, title = title
+        Task.detached(priority: .utility) {
+            var pages = book.storedPanels().filter { !ignored.contains($0.key) }
+            pages.merge(custom) { _, new in new }
+            do {
+                try book.storePanels(pages)
+            } catch {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.alertStyle = .warning
+                    alert.messageText = "Couldn’t save panels inside “\(title)”"
+                    alert.informativeText = "Your edits are still saved in Comic Viewer. \(error.localizedDescription)"
+                    alert.runModal()
+                }
+            }
         }
     }
 

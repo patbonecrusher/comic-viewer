@@ -44,7 +44,7 @@ final class Library {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.message = "Choose folders that hold your comics. Comic Viewer reads them in place and never moves or changes your files."
+        panel.message = "Choose folders that hold your comics. Comic Viewer reads them in place and never moves them."
         panel.prompt = "Add to Library"
         guard panel.runModal() == .OK else { return }
         addFolders(panel.urls)

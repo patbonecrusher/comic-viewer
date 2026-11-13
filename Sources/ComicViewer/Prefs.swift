@@ -39,7 +39,26 @@ extension ReadingDirection {
     var title: String { self == .leftToRight ? "Left to Right" : "Right to Left (Manga)" }
 }
 
+/// Where hand-set panels are kept.
+enum PanelStorage: String, CaseIterable {
+    case ask, file, app
+
+    var title: String {
+        switch self {
+        case .ask: return "Ask the First Time"
+        case .file: return "In the Comic File and in Comic Viewer"
+        case .app: return "In Comic Viewer Only"
+        }
+    }
+}
+
 enum Prefs {
+    static let panelStorage = "panelStorage"
+    static var panelStorageChoice: PanelStorage {
+        get { PanelStorage(rawValue: UserDefaults.standard.string(forKey: panelStorage) ?? "") ?? .ask }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: panelStorage) }
+    }
+
     static let showStatusBar = "showStatusBar"
     static let showThumbnails = "showThumbnails"
     static let layout = "defaultLayout"

@@ -186,6 +186,56 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertTrue(store.books().isEmpty)
     }
 
+    func testPanelsSavedInsideCBZComeBack() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("Edited.cbz")
+        try makeComic(at: url, pages: 3)
+
+        let book = try ComicBook(url: url)
+        XCTAssertTrue(book.canStorePanels)
+        XCTAssertNil(book.embeddedPanels(forPage: 0))
+        let drawn = [CGRect(x: 0.1, y: 0.1, width: 0.4, height: 0.3), CGRect(x: 0.55, y: 0.1, width: 0.35, height: 0.3)]
+        try book.storePanels([1: drawn, 2: []])
+        // Still readable through the same object after the file was rewritten…
+        XCTAssertEqual(try book.image(at: 2).width, 20)
+        XCTAssertEqual(book.embeddedPanels(forPage: 1), drawn)
+        // …and saving again replaces rather than piles up.
+        try book.storePanels([1: [drawn[0]]])
+
+        let reopened = try ComicBook(url: url)
+        XCTAssertEqual(reopened.pageCount, 3)
+        XCTAssertEqual(reopened.storedPanels(), [1: [drawn[0]]])
+        XCTAssertNil(reopened.embeddedPanels(forPage: 2))
+    }
+
+    func testReadsACBFFrames() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("WithFrames.cbz")
+        try makeComic(at: url, pages: 2)      // 20 × 30 pixel pages named p1.png, p2.png
+        let acbf = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ACBF xmlns="http://www.acbf.info/xml/acbf/1.1"><meta-data><book-info>
+            <coverpage><image href="p1.png"/><frame points="0,0 20,0 20,30 0,30"/></coverpage></book-info></meta-data>
+            <body><page><image href="P2.png"/>
+            <frame points="2,3 10,3 10,15 2,15"/><frame points="10,15 20,15 20,30 10,30"/><text-layer lang="en"/></page></body></ACBF>
+            """
+        let archive = try Archive(url: url, accessMode: .update)
+        let data = Data(acbf.utf8)
+        try archive.addEntry(with: "WithFrames.acbf", type: .file, uncompressedSize: Int64(data.count)) { position, size in
+            data.subdata(in: Int(position)..<Int(position) + size)
+        }
+        let book = try ComicBook(url: url)
+        XCTAssertEqual(book.embeddedPanels(forPage: 0), [CGRect(x: 0, y: 0, width: 1, height: 1)])
+        let panels = try XCTUnwrap(book.embeddedPanels(forPage: 1))
+        XCTAssertEqual(panels.count, 2)
+        XCTAssertEqual(panels[0].minX, 0.1, accuracy: 0.001); XCTAssertEqual(panels[0].height, 0.4, accuracy: 0.001)
+        XCTAssertEqual(panels[1].minY, 0.5, accuracy: 0.001)
+    }
+
     func testRendersPDFPages() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         defer { try? FileManager.default.removeItem(at: url) }

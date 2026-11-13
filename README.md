@@ -10,7 +10,8 @@ Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
   Works from gutters on grid pages and from panel borders where framed panels sit on full-page art (the whole
   page is shown first, then each panel). Pages it can't split (splash pages, borderless or slanted layouts) are shown whole.
 - **Panel editor** — when detection gets a page wrong, draw, move, resize, reorder or delete its panels (⌘E).
-  Edits are saved per page.
+  Edits are saved per page, and optionally inside the CBZ itself (a small `ComicViewerPanels.json`) so they travel
+  with the comic. Panel frames from an embedded ACBF file are used when a comic has them.
 - **Library** — add folders of comics; covers, series, search, unread / in progress / finished. Files stay where they are.
 - **Reader** — single and double page, fit page / width / height, pinch zoom, thumbnails, page scrubber,
   keyboard, click and swipe navigation, left-to-right or right-to-left (manga) per comic.
