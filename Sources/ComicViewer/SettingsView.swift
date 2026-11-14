@@ -7,6 +7,8 @@ struct SettingsView: View {
     @AppStorage(Prefs.background) private var background = ReaderBackground.dark.rawValue
     @AppStorage(Prefs.showStatusBar) private var showStatusBar = true
     @AppStorage(Prefs.panelStorage) private var panelStorage = PanelStorage.ask.rawValue
+    @AppStorage(Prefs.pageBeforePanels) private var pageBeforePanels = false
+    @AppStorage(Prefs.pageAfterPanels) private var pageAfterPanels = false
 
     var body: some View {
         Form {
@@ -17,6 +19,15 @@ struct SettingsView: View {
                 Picker("Reading direction", selection: $direction) {
                     ForEach(ReadingDirection.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
                 }
+            }
+            Section {
+                Toggle("Show the whole page before its panels", isOn: $pageBeforePanels)
+                Toggle("Show the whole page again after its panels", isOn: $pageAfterPanels)
+            } header: {
+                Text("Reading panel by panel")
+            } footer: {
+                Text("Applies from the next page you turn to.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 Picker("Save panel edits", selection: $panelStorage) {
@@ -36,6 +47,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 430)
+        .frame(width: 480, height: 560)
     }
 }

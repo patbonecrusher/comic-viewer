@@ -15,6 +15,7 @@ Marketing/listing.json (see the app-store-submit skill for the schema).
     Tools/asc.py price                  set the app to free in all territories
     Tools/asc.py review-info            copy contact info into App Review details
     Tools/asc.py submit                 create the review submission and submit it
+    Tools/asc.py profiles               enable iCloud on the App ID and fetch fresh provisioning profiles into Resources/
     Tools/asc.py all                    metadata + screenshots + build + price + review-info (no submit)
 
 Auth: ASC_KEY_ID / ASC_ISSUER_ID env vars, key at ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
@@ -378,6 +379,52 @@ def cmd_submit(asc):
     print(f"✓ submitted {v['attributes']['versionString']} for review")
 
 
+def cmd_profiles(asc):
+    """Turn on iCloud for the App ID and (re)create the three provisioning profiles in Resources/."""
+    import base64, plistlib, subprocess
+    name = BUNDLE_ID.split(".")[-1]
+    bundle = next((b for b in asc.all("/bundleIds", **{"filter[identifier]": BUNDLE_ID})
+                   if b["attributes"]["identifier"] == BUNDLE_ID), None) or die(f"bundle id {BUNDLE_ID} is not registered")
+    caps = [c["attributes"]["capabilityType"] for c in asc.get(f"/bundleIds/{bundle['id']}/bundleIdCapabilities")["data"]]
+    if "ICLOUD" not in caps:
+        asc.post("/bundleIdCapabilities", "bundleIdCapabilities",
+                 {"capabilityType": "ICLOUD", "settings": [{"key": "ICLOUD_VERSION", "options": [{"key": "XCODE_6"}]}]},
+                 {"bundleId": ref("bundleIds", bundle["id"])})
+        print("✓ iCloud capability enabled on the App ID")
+    certs = asc.all("/certificates")
+    udid = next((line.split(":")[1].strip() for line in subprocess.run(
+        ["system_profiler", "SPHardwareDataType"], capture_output=True, text=True).stdout.splitlines()
+        if "Provisioning UDID" in line), None)
+    devices = [d for d in asc.all("/devices") if d["attributes"]["platform"] == "MAC_OS" and d["attributes"]["status"] == "ENABLED"]
+    if udid and not any(d["attributes"]["udid"] == udid for d in devices):
+        devices.append(asc.post("/devices", "devices", {"name": "This Mac", "platform": "MAC_OS", "udid": udid}))
+        print("✓ registered this Mac as a development device")
+    wanted = [
+        ("Mac App Store", "MAC_APP_STORE", ("DISTRIBUTION", "MAC_APP_DISTRIBUTION"), f"Resources/{name}.provisionprofile", False),
+        ("Developer ID", "MAC_APP_DIRECT", ("DEVELOPER_ID_APPLICATION", "DEVELOPER_ID_APPLICATION_G2"), f"Resources/{name}-devid.provisionprofile", False),
+        ("Development", "MAC_APP_DEVELOPMENT", ("DEVELOPMENT", "MAC_APP_DEVELOPMENT"), f"Resources/{name}-dev.provisionprofile", True),
+    ]
+    existing = asc.all("/profiles")
+    for label, kind, cert_types, path, with_devices in wanted:
+        title = f"{name} {label}"
+        for old in existing:
+            if old["attributes"]["name"] == title:
+                asc.call("DELETE", f"/profiles/{old['id']}")
+        rel = {"bundleId": ref("bundleIds", bundle["id"]),
+               "certificates": [ref("certificates", c["id"]) for c in certs if c["attributes"]["certificateType"] in cert_types]}
+        if not rel["certificates"]:
+            print(f"! {label}: no certificate of type {'/'.join(cert_types)}; skipped")
+            continue
+        if with_devices:
+            rel["devices"] = [ref("devices", d["id"]) for d in devices]
+        made = asc.post("/profiles", "profiles", {"name": title, "profileType": kind}, rel)
+        content = base64.b64decode(made["attributes"]["profileContent"])
+        Path(path).write_bytes(content)
+        decoded = subprocess.run(["security", "cms", "-D", "-i", path], capture_output=True).stdout
+        granted = plistlib.loads(decoded)["Entitlements"].get("com.apple.developer.icloud-container-identifiers", [])
+        print(f"✓ {path}  iCloud containers: {', '.join(granted) if granted else 'none (create the container and assign it to the App ID)'}")
+
+
 def main():
     args = sys.argv[1:] or ["status"]
     asc = ASC()
@@ -396,6 +443,8 @@ def main():
         cmd_review_info(asc)
     elif cmd == "submit":
         cmd_submit(asc)
+    elif cmd == "profiles":
+        cmd_profiles(asc)
     elif cmd == "all":
         cmd_metadata(asc)
         cmd_screenshots(asc, [])

@@ -23,6 +23,16 @@ Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
   Edits are saved per page, and optionally inside the CBZ itself (a small `ComicViewerPanels.json`) so they travel
   with the comic. Panel frames from an embedded ACBF file are used when a comic has them.
 - **Library** — add folders of comics; covers, series, search, unread / in progress / finished. Files stay where they are.
+  **Rename File…** gives a comic's file a tidy name built from its title (`Series 002 - Title (Year)`), keeping its
+  reading position and panel edits. **Rename Series…** gives a series a better name (or merges it into another)
+  without touching the files; issues added later join it. **Move to Series…** puts the selected comics in
+  another series, or in a new one you name. Dragging comics onto a series in the sidebar does the same.
+- **Cleaning up** — select several comics (⌘-click, ⇧-click, ⌘A) and remove them from the library; files are never
+  deleted. A comic removed from inside a library folder stays removed across rescans until you choose
+  File → Restore Removed Comics. File → Remove Missing Comics clears entries whose files are gone.
+- **iCloud** — comics kept in iCloud Drive are listed without being downloaded, show a cloud badge, download when
+  opened, and can have their local copy removed again. With iCloud enabled for the build (see RELEASING.md), the app
+  also has its own "Comic Viewer" folder in iCloud Drive and a Move to iCloud command.
 - **Reader** — single and double page, fit page / width / height, pinch zoom, thumbnails, page scrubber,
   keyboard, click and swipe navigation, left-to-right or right-to-left (manga) per comic.
 - **Formats** — CBZ, CBR, PDF and folders of images; reads `ComicInfo.xml` when present.

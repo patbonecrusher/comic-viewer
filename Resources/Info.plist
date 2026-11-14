@@ -104,5 +104,18 @@
             </dict>
         </dict>
     </array>
+    <!-- The app's folder in iCloud Drive ("Comic Viewer"), visible in Finder and the Files app. -->
+    <key>NSUbiquitousContainers</key>
+    <dict>
+        <key>iCloud.com.patlaplante.ComicViewer</key>
+        <dict>
+            <key>NSUbiquitousContainerIsDocumentScopePublic</key>
+            <true/>
+            <key>NSUbiquitousContainerName</key>
+            <string>Comic Viewer</string>
+            <key>NSUbiquitousContainerSupportedFolderLevels</key>
+            <string>Any</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

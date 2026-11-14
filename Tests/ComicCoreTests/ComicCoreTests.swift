@@ -139,6 +139,201 @@ final class ComicCoreTests: XCTestCase {
         }
     }
 
+    func testRemovedComicsStayRemovedUntilRestored() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeComic(at: comics.appendingPathComponent("Saga 001.cbz"), pages: 3)
+        try makeComic(at: comics.appendingPathComponent("Saga 002.cbz"), pages: 3)
+        let loose = root.appendingPathComponent("Loose 001.cbz")
+        try makeComic(at: loose, pages: 2)
+
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: comics.path, bookmark: Data())
+        _ = store.scan(folder, at: comics)
+        let own = try store.record(ComicBook(url: loose))
+        XCTAssertEqual(store.books().count, 3)
+
+        let first = try XCTUnwrap(store.books().first { $0.number == 1 && $0.folderID != nil })
+        store.update(id: first.id!) { $0.page = 2 }
+        store.takeOut(ids: [first.id!, own.id!])
+        XCTAssertEqual(store.books().map(\.title), ["Saga #2"])
+        XCTAssertEqual(store.hiddenCount(), 1)                 // the one opened on its own is simply forgotten
+
+        // A scan must not bring the removed comic back, nor add it a second time.
+        let result = store.scan(folder, at: comics)
+        XCTAssertEqual([result.added, result.removed], [0, 0])
+        XCTAssertEqual(store.books().count, 1)
+
+        XCTAssertEqual(store.restoreHidden(), 1)
+        let restored = try XCTUnwrap(store.books().first { $0.id == first.id })
+        XCTAssertEqual(restored.page, 2)                       // with its reading position
+        XCTAssertEqual(store.hiddenCount(), 0)
+
+        // A removed comic whose file is then deleted is forgotten by the next scan.
+        store.takeOut(ids: [first.id!])
+        try FileManager.default.removeItem(at: comics.appendingPathComponent("Saga 001.cbz"))
+        _ = store.scan(folder, at: comics)
+        XCTAssertEqual(store.hiddenCount(), 0)
+    }
+
+    func testRenamedSeriesSticksAndTakesInLaterIssues() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeComic(at: comics.appendingPathComponent("BB 001.cbz"), pages: 2)
+        try makeComic(at: comics.appendingPathComponent("BB 002.cbz"), pages: 2)
+        try makeComic(at: comics.appendingPathComponent("Other 001.cbz"), pages: 2)
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: comics.path, bookmark: Data())
+        _ = store.scan(folder, at: comics)
+        XCTAssertEqual(Set(store.books().map(\.series)), ["BB", "Other"])
+
+        XCTAssertEqual(store.renameSeries("BB", to: " Buster Brown "), 2)
+        XCTAssertEqual(Set(store.books().map(\.series)), ["Buster Brown", "Other"])
+        XCTAssertTrue(store.books().contains { $0.title == "Buster Brown #1" })
+
+        // A later issue joins the renamed series, and reading a comic again doesn't undo the name.
+        try makeComic(at: comics.appendingPathComponent("BB 003.cbz"), pages: 2)
+        _ = store.scan(folder, at: comics)
+        _ = try store.record(ComicBook(url: comics.appendingPathComponent("BB 001.cbz")), folderID: folder.id)
+        XCTAssertEqual(store.books().filter { $0.series == "Buster Brown" }.count, 3)
+
+        // Renaming again carries the files' own name along; naming another series merges into it.
+        store.renameSeries("Buster Brown", to: "Other")
+        try makeComic(at: comics.appendingPathComponent("BB 004.cbz"), pages: 2)
+        _ = store.scan(folder, at: comics)
+        XCTAssertEqual(Set(store.books().map(\.series)), ["Other"])
+        XCTAssertEqual(store.books().count, 5)
+    }
+
+    func testComicMovedToAnotherSeriesStaysThere() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stray = comics.appendingPathComponent("origins 001.cbz")
+        try makeComic(at: stray, pages: 2)
+        try makeComic(at: comics.appendingPathComponent("Runner 001.cbz"), pages: 2)
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: comics.path, bookmark: Data())
+        _ = store.scan(folder, at: comics)
+        let book = try XCTUnwrap(store.book(path: stray.path))
+        XCTAssertEqual(book.series, "origins")
+
+        store.setSeries("Runner", ids: [book.id!])
+        XCTAssertEqual(store.book(id: book.id!)?.title, "Runner #1")
+        // Reading the file again doesn't put it back, and a later rename of the series carries it along.
+        _ = try store.record(ComicBook(url: stray), folderID: folder.id)
+        XCTAssertEqual(store.books().map(\.series), ["Runner", "Runner"])
+        store.renameSeries("Runner", to: "Blade Runner")
+        _ = try store.record(ComicBook(url: stray), folderID: folder.id)
+        XCTAssertEqual(store.books().map(\.series), ["Blade Runner", "Blade Runner"])
+
+        // An empty name takes it out of any series.
+        store.setSeries("", ids: [book.id!])
+        _ = try store.record(ComicBook(url: stray), folderID: folder.id)
+        XCTAssertEqual(store.book(id: book.id!)?.series, "")
+    }
+
+    func testRenamingAFileKeepsItsSeriesAndDetails() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // No ComicInfo: everything known about this comic comes from its file name.
+        let old = comics.appendingPathComponent("bladerunner2019volume2_offworld.cbz")
+        try makeComic(at: old, pages: 2)
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: comics.path, bookmark: Data())
+        _ = store.scan(folder, at: comics)
+        let book = try XCTUnwrap(store.books().first)
+        XCTAssertEqual([book.series, book.title], ["bladerunner2019", "offworld"])
+        XCTAssertEqual(book.suggestedFileName, "bladerunner2019 v02 - offworld")
+
+        // A name that says nothing about the series must not start a new one.
+        let new = comics.appendingPathComponent("my favourite.cbz")
+        try FileManager.default.moveItem(at: old, to: new)
+        var moved = try store.relocate(id: book.id!, to: new)
+        // The title follows the name that was typed; the series and volume stay.
+        XCTAssertEqual([moved.series, moved.title], ["bladerunner2019", "my favourite"])
+        XCTAssertEqual(moved.volume, 2)
+        // Still true after a rescan and after the comic is opened again.
+        _ = store.scan(folder, at: comics)
+        moved = try store.record(ComicBook(url: new), folderID: folder.id)
+        XCTAssertEqual([moved.series, moved.title], ["bladerunner2019", "my favourite"])
+        XCTAssertEqual(store.books().count, 1)
+
+        // Details set by hand hold through later reads of the file.
+        store.setDetails(id: book.id!, title: "My Favourite", series: "Blade Runner 2019", volume: 5, number: nil, year: 2019)
+        moved = try store.record(ComicBook(url: new), folderID: folder.id)
+        XCTAssertEqual([moved.series, moved.title], ["Blade Runner 2019", "My Favourite"])
+        XCTAssertEqual([moved.volume, moved.year], [5, 2019])
+        store.setDetails(id: book.id!, title: "my favourite", series: "bladerunner2019", volume: 2, number: nil, year: nil)
+        moved = try XCTUnwrap(store.book(id: book.id!))
+
+        // The app's own suggestion keeps the title, and a typed "Series v02 - Title" name gives just the title.
+        let tidy = comics.appendingPathComponent(moved.suggestedFileName + ".cbz")
+        XCTAssertEqual(tidy.lastPathComponent, "bladerunner2019 v02 - my favourite.cbz")
+        try FileManager.default.moveItem(at: new, to: tidy)
+        moved = try store.relocate(id: book.id!, to: tidy)
+        XCTAssertEqual(moved.title, "my favourite")
+        let typed = comics.appendingPathComponent("bladerunner2019 v02 - Off-World.cbz")
+        try FileManager.default.moveItem(at: tidy, to: typed)
+        moved = try store.relocate(id: book.id!, to: typed)
+        XCTAssertEqual([moved.series, moved.title], ["bladerunner2019", "Off-World"])
+
+        // The names the app suggests read back as the same comic.
+        func parse(_ name: String) -> ComicMetadata { .fromFileName(URL(fileURLWithPath: "/Comics/Shelf/" + name)) }
+        let issue = parse("Saga 002 - Chapter Two (2012).cbz")
+        XCTAssertEqual(issue.series, "Saga"); XCTAssertEqual(issue.number, 2); XCTAssertEqual(issue.title, "Chapter Two")
+        let volume = parse("bladerunner2019 v02 - offworld.cbz")
+        XCTAssertEqual(volume.series, "bladerunner2019"); XCTAssertEqual(volume.volume, 2); XCTAssertEqual(volume.title, "offworld")
+        let both = parse("Akira v03 012 - Tetsuo.cbz")
+        XCTAssertEqual(both.series, "Akira"); XCTAssertEqual(both.volume, 3); XCTAssertEqual(both.number, 12); XCTAssertEqual(both.title, "Tetsuo")
+        XCTAssertEqual(parse("Blade Runner 2049 - Art Book.cbz").number, nil)
+    }
+
+    func testRenamedFileKeepsItsRecord() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        let comics = root.appendingPathComponent("Comics")
+        try FileManager.default.createDirectory(at: comics, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let old = comics.appendingPathComponent("scan_0042_final.cbz")
+        try makeComic(at: old, pages: 3, comicInfo: """
+            <?xml version="1.0"?><ComicInfo><Series>Batman: Year One</Series><Number>2</Number><Title>War on Crime</Title><Year>1987</Year></ComicInfo>
+            """)
+        let store = try LibraryStore(directory: root.appendingPathComponent("Store"))
+        let folder = try store.addFolder(path: comics.path, bookmark: Data())
+        _ = store.scan(folder, at: comics)
+        let book = try XCTUnwrap(store.books().first)
+        XCTAssertEqual(book.suggestedFileName, "Batman - Year One 002 - War on Crime (1987)")
+        store.update(id: book.id!) { $0.page = 2 }
+        store.setPanelOverride([CGRect(x: 0, y: 0, width: 0.5, height: 0.5)], bookID: book.id!, page: 1)
+
+        let new = comics.appendingPathComponent(book.suggestedFileName + ".cbz")
+        try FileManager.default.moveItem(at: old, to: new)
+        let moved = try store.relocate(id: book.id!, to: new)
+        XCTAssertEqual(moved.id, book.id)
+        XCTAssertEqual(moved.path, new.path)
+        XCTAssertEqual(moved.page, 2)
+        XCTAssertEqual(store.panelOverrides(bookID: book.id!).count, 1)
+
+        // The next scan sees the same comic, not a new one plus a missing one.
+        let result = store.scan(folder, at: comics)
+        XCTAssertEqual([result.added, result.removed], [0, 0])
+        XCTAssertEqual(store.books().count, 1)
+
+        // Names built from the file name alone stay as they are.
+        var plain = book
+        plain.series = "Saga"; plain.number = 1; plain.title = "Saga #1"; plain.year = 2012
+        XCTAssertEqual(plain.suggestedFileName, "Saga 001 (2012)")
+        plain.series = ""; plain.number = nil; plain.title = "A/B: C."; plain.year = nil
+        XCTAssertEqual(plain.suggestedFileName, "A-B - C")
+    }
+
     func testLibraryScanAddsReadsMetadataAndRemoves() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
         let comics = root.appendingPathComponent("Comics/Saga")

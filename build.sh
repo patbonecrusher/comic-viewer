@@ -91,6 +91,27 @@ require_identity() {
 
 ENTITLEMENTS="$BUILD_DIR/ComicViewer.entitlements"
 cp Resources/ComicViewer.entitlements "$ENTITLEMENTS"
+
+# iCloud (the app's own folder in iCloud Drive) is a restricted entitlement: the app may only claim it
+# when a provisioning profile that grants it is embedded. With such a profile for the signing mode
+# (Tools/asc.py profiles fetches them), embed it and claim iCloud; without one, build as before and the
+# app simply has no iCloud folder.
+#   use_profile <profile> <Development|Production>
+use_profile() {
+  local profile="$1" environment="$2" pb=/usr/libexec/PlistBuddy container="iCloud.$BUNDLE_ID"
+  cp "$profile" "$APP/Contents/embedded.provisionprofile"
+  # The profile requires the app to declare its identity in the entitlements, like Xcode does.
+  $pb -c "Add :com.apple.application-identifier string $TEAM_ID.$BUNDLE_ID" "$ENTITLEMENTS"
+  $pb -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$ENTITLEMENTS"
+  if security cms -D -i "$profile" 2>/dev/null | grep -q "<string>$container</string>"; then
+    for key in com.apple.developer.icloud-container-identifiers com.apple.developer.ubiquity-container-identifiers; do
+      $pb -c "Add :$key array" -c "Add :$key:0 string $container" "$ENTITLEMENTS"
+    done
+    $pb -c "Add :com.apple.developer.icloud-services array" -c "Add :com.apple.developer.icloud-services:0 string CloudDocuments" "$ENTITLEMENTS"
+    $pb -c "Add :com.apple.developer.icloud-container-environment string $environment" "$ENTITLEMENTS"
+    echo "==> iCloud enabled ($container)"
+  fi
+}
 SIGN_FLAGS=(--force --timestamp --options runtime)
 
 case "$SIGN" in
@@ -102,9 +123,11 @@ case "$SIGN" in
     IDENTITY="$(security find-identity -v -p codesigning | grep 'Apple Development' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
     [[ -n $IDENTITY ]] || { echo "error: no Apple Development certificate in keychain" >&2; exit 1; }
     SIGN_FLAGS=(--force --timestamp=none)
+    [[ -f Resources/ComicViewer-dev.provisionprofile ]] && use_profile Resources/ComicViewer-dev.provisionprofile Development
     ;;
   devid)
     IDENTITY="$(require_identity 'Developer ID Application')"
+    [[ -f Resources/ComicViewer-devid.provisionprofile ]] && use_profile Resources/ComicViewer-devid.provisionprofile Production
     ;;
   appstore)
     SIGN_FLAGS=(--force --timestamp)                       # App Store: sandbox, no hardened runtime needed
@@ -126,10 +149,7 @@ for c in plistlib.loads(sys.stdin.buffer.read())["DeveloperCertificates"]: print
       echo "       Regenerate the profile with a certificate from: security find-identity -v -p codesigning" >&2
       exit 1
     fi
-    cp "$PROVISIONING_PROFILE" "$APP/Contents/embedded.provisionprofile"
-    # The profile requires the app to declare its identity in the entitlements, like Xcode does.
-    /usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $TEAM_ID.$BUNDLE_ID" "$ENTITLEMENTS"
-    /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$ENTITLEMENTS"
+    use_profile "$PROVISIONING_PROFILE" Production
     ;;
   *) echo "unknown --sign mode: $SIGN (none|dev|devid|appstore)" >&2; exit 1 ;;
 esac

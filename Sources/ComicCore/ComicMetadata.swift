@@ -56,6 +56,21 @@ public struct ComicMetadata: Equatable, Sendable {
             metadata.number = matches(#"(\d+)"#, in: String(titlePart[range])).first.flatMap { Double($0[1]) }
             titlePart.removeSubrange(range)
         }
+        // A number between the series and a title: "Saga 002 - Chapter Two", or "Akira v03 012 - Title".
+        func isYear(_ hash: String, _ digits: String) -> Bool {
+            hash.isEmpty && digits.count == 4 && (1900...2100).contains(Int(digits) ?? 0)
+        }
+        if metadata.number == nil, titlePart.isEmpty,
+           let found = matches(#"^(.+?)\s+(#?)(\d{1,4}(?:\.\d+)?)\s+[-–—]\s+(.+)$"#, in: seriesPart).first, !isYear(found[2], found[3]) {
+            metadata.number = Double(found[3])
+            seriesPart = found[1]
+            titlePart = found[4]
+        } else if metadata.number == nil,
+                  let found = matches(#"^\s*(#?)(\d{1,4}(?:\.\d+)?)(?:\s+[-–—]\s+|\s*$)"#, in: titlePart).first, !isYear(found[1], found[2]),
+                  let range = titlePart.range(of: found[0]) {
+            metadata.number = Double(found[2])
+            titlePart.removeSubrange(range)
+        }
         // A trailing issue number: "#12", "012", "12.5" — but not something that looks like a year in the title.
         if metadata.number == nil, let issue = matches(#"(?:\s|^)(#?)(\d{1,4}(?:\.\d+)?)\s*$"#, in: seriesPart).first, let value = Double(issue[2]) {
             let looksLikeYear = issue[1].isEmpty && issue[2].count == 4 && (1900...2100).contains(Int(value))

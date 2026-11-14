@@ -59,6 +59,12 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: panelStorage) }
     }
 
+    /// Panel-by-panel reading: show the whole page before its first panel / after its last one.
+    static let pageBeforePanels = "wholePageBeforePanels"
+    static let pageAfterPanels = "wholePageAfterPanels"
+    static var wholePageBeforePanels: Bool { UserDefaults.standard.bool(forKey: pageBeforePanels) }
+    static var wholePageAfterPanels: Bool { UserDefaults.standard.bool(forKey: pageAfterPanels) }
+
     static let showStatusBar = "showStatusBar"
     static let showThumbnails = "showThumbnails"
     static let layout = "defaultLayout"

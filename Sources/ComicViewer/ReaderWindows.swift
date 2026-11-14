@@ -27,9 +27,17 @@ final class ReaderWindows {
         for url in panel.urls { open(url) }
     }
 
+    /// Whether this comic has a reader window right now.
+    func isOpen(_ url: URL) -> Bool { open[url.standardizedFileURL.path] != nil }
+
     func open(_ book: LibraryBook) {
         guard let url = Library.shared.url(for: book) else {
             return present(error: "It may have been moved or deleted.", title: book.title)
+        }
+        // A comic that is only in iCloud is fetched first; the library shows the progress.
+        guard LibraryStore.isDownloaded(url) else {
+            Task { if await Library.shared.download(book) { open(url) } }
+            return
         }
         open(url)
     }

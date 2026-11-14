@@ -97,7 +97,12 @@ final class ReaderModel {
         guard let first = pages.first, let last = pages.last else { return "" }
         let page = first == last ? "Page \(first + 1) of \(book.pageCount)" : "Pages \(first + 1)–\(last + 1) of \(book.pageCount)"
         if isEditingPanels { return "\(page) · Editing \(editPanels.count) panel\(editPanels.count == 1 ? "" : "s")" }
-        return panelMode && panels.count > 1 ? "\(page) · Panel \(panelIndex + 1) of \(panels.count)" : page
+        guard panelMode, hasPanelSteps, panels.indices.contains(panelIndex) else { return page }
+        // The whole-page views before and after the panels are not panels and are not counted as such.
+        if isWholeSpread(panels[panelIndex]) { return "\(page) · Whole page" }
+        let real = panels.filter { !isWholeSpread($0) }.count
+        let number = panels[...panelIndex].filter { !isWholeSpread($0) }.count
+        return "\(page) · Panel \(number) of \(real)"
     }
 
     func goToSpread(_ index: Int) {
@@ -205,14 +210,14 @@ final class ReaderModel {
             let found = panelMode || isEditingPanels ? await spreadPanels(pages: ordered, images: images) : []
             guard token == generation else { return }
             pageError = nil
-            panels = found
+            panels = isEditingPanels ? found : readingSteps(for: found)
             if isEditingPanels {
                 // A page shown whole has nothing to adjust: start it with no panels rather than one giant one.
                 editPanels = found.count == 1 && isWholeSpread(found[0]) ? [] : found
                 editSelection = nil
                 editDirty = false
             }
-            panelIndex = enterAtLastPanel ? max(0, found.count - 1) : 0
+            panelIndex = enterAtLastPanel ? max(0, panels.count - 1) : 0
             enterAtLastPanel = false
             updateFocus()
             display = SpreadDisplay(id: token, images: images)
@@ -254,14 +259,26 @@ final class ReaderModel {
         saveProgress()
     }
 
+    /// What panel-by-panel reading stops at on a page: its panels, with the whole page shown first
+    /// and/or last when the reader asked for that in Settings. A page that is one picture is left alone,
+    /// and so is an end that already shows the whole page.
+    private func readingSteps(for found: [CGRect]) -> [CGRect] {
+        guard !found.isEmpty, !(found.count == 1 && isWholeSpread(found[0])) else { return found }
+        var steps = found
+        let whole = CGRect(x: 0, y: 0, width: 1, height: 1)
+        if Prefs.wholePageBeforePanels, let first = steps.first, !isWholeSpread(first) { steps.insert(whole, at: 0) }
+        if Prefs.wholePageAfterPanels, let last = steps.last, !isWholeSpread(last) { steps.append(whole) }
+        return steps
+    }
+
     private func showPanel(_ index: Int) {
         panelIndex = index
         updateFocus()
     }
 
     private func updateFocus() {
-        // A page that is one big panel is simply shown whole.
-        guard panelMode, !isEditingPanels, panels.count > 1, panels.indices.contains(panelIndex) else { return focus = nil }
+        // A page that is one big picture is simply shown whole.
+        guard panelMode, !isEditingPanels, hasPanelSteps, panels.indices.contains(panelIndex) else { return focus = nil }
         focusCounter += 1
         focus = PanelFocus(id: focusCounter, rect: panels[panelIndex])
     }
@@ -304,6 +321,11 @@ final class ReaderModel {
     }
 
     // MARK: - Editing panels
+
+    /// Whether the page has anything to zoom in on: several panels, or a single one smaller than the page.
+    private var hasPanelSteps: Bool {
+        panels.count > 1 || panels.first.map { !isWholeSpread($0) } == true
+    }
 
     private func isWholeSpread(_ rect: CGRect) -> Bool {
         rect.minX < 0.01 && rect.minY < 0.01 && rect.width > 0.98 && rect.height > 0.98

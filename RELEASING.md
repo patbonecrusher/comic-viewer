@@ -28,3 +28,17 @@ App Privacy has no public API: App Store Connect → App Privacy → Get Started
 Notes: `build.sh` signs with the certificate embedded in the provisioning profile (App Store Connect rejects any other),
 strips extended attributes before signing (ITMS-91109), and distribution-signed builds cannot be launched locally —
 use `--sign dev` for local testing and screenshots.
+
+## iCloud
+
+The app's own iCloud Drive folder needs the container `iCloud.com.patlaplante.ComicViewer`, created once in the developer
+portal (Identifiers → iCloud Containers → +) and assigned to the App ID (Identifiers → the App ID → iCloud → Configure).
+Then fetch profiles that grant it:
+
+```sh
+Tools/asc.py profiles     # → Resources/ComicViewer.provisionprofile, -devid.provisionprofile, -dev.provisionprofile (git-ignored)
+```
+
+`build.sh` embeds the profile for the signing mode and claims the iCloud entitlements only when the profile grants the
+container; without one (or with `--sign none`) the app builds as before and simply has no iCloud folder. Profiles expire
+with their certificates; rerun the command to renew them.

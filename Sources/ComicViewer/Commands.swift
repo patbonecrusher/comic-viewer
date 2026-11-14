@@ -24,6 +24,36 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
             Divider()
+            Button("Edit Details…") { if let book = Library.shared.selectedBook { Library.shared.promptEditDetails(book) } }
+                .keyboardShortcut("i")
+                .disabled(reader != nil || Library.shared.selectedBook == nil)
+            Button("Rename File…") { if let book = Library.shared.selectedBook { Library.shared.promptRename(book) } }
+                .disabled(reader != nil || Library.shared.selectedBook == nil)
+            Button("Rename Series…") { if let book = Library.shared.selectedBook { Library.shared.promptRenameSeries(book.series) } }
+                .disabled(reader != nil || (Library.shared.selectedBook?.series ?? "").isEmpty)
+            Button("Move to Series…") { Library.shared.promptMoveToSeries(Library.shared.selectedBooks) }
+                .disabled(reader != nil || Library.shared.selectedBookIDs.isEmpty)
+            if let book = Library.shared.selectedBook, book.isInCloud, reader == nil {
+                if book.downloaded {
+                    Button("Remove Download") { Library.shared.removeDownload(book) }
+                } else {
+                    Button("Download from iCloud") { Task { await Library.shared.download(book) } }
+                }
+            }
+            if Library.shared.cloudFolder != nil {
+                Button("Move to iCloud") { Library.shared.moveToCloud(Library.shared.selectedBooks) }
+                    .disabled(reader != nil || Library.shared.selectedBooks.allSatisfy(Library.shared.isInCloudFolder))
+            }
+            Button("Remove from Library") { Library.shared.remove(Library.shared.selectedBooks) }
+                .keyboardShortcut(.delete)
+                .disabled(reader != nil || Library.shared.selectedBookIDs.isEmpty)
+            Divider()
+            Button("Remove Missing Comics…") { Library.shared.removeMissing() }
+            Button(Library.shared.hiddenCount > 0 ? "Restore Removed Comics (\(Library.shared.hiddenCount))" : "Restore Removed Comics") {
+                Library.shared.restoreRemoved()
+            }
+            .disabled(Library.shared.hiddenCount == 0)
+            Divider()
             Button("Show Library") { openWindow(id: "library") }
                 .keyboardShortcut("0")
         }

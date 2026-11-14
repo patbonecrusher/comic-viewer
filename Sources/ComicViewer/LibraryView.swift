@@ -24,7 +24,11 @@ struct LibraryView: View {
     private var library: Library { .shared }
     @State private var section: LibrarySection? = .all
     @State private var search = ""
-    @State private var selected: Int64?
+    @State private var selection: Set<Int64> = []
+    /// Where a shift-click range starts.
+    @State private var anchor: Int64?
+    @State private var dropTarget: String?
+    @FocusState private var gridFocused: Bool
     @State private var isDropTarget = false
     @AppStorage("librarySort") private var sort = LibrarySort.series.rawValue
 
@@ -71,18 +75,33 @@ struct LibraryView: View {
                 Section("Series") {
                     ForEach(seriesNames, id: \.name) { series in
                         row(series.name, "square.stack", .series(series.name), series.count)
+                            .listRowBackground(dropTarget == series.name
+                                ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.3)).padding(.horizontal, 10) : nil)
+                            // Comics dragged from the grid join this series.
+                            .dropDestination(for: String.self) { items, _ in
+                                let ids = items.flatMap(Self.bookIDs(in:))
+                                library.moveToSeries(series.name, ids: ids)
+                                return !ids.isEmpty
+                            } isTargeted: { over in
+                                if over { dropTarget = series.name } else if dropTarget == series.name { dropTarget = nil }
+                            }
+                            .contextMenu { Button("Rename Series…") { renameSeries(series.name) } }
                     }
                 }
             }
             Section("Folders") {
                 ForEach(library.folders) { folder in
-                    row(folder.name, "folder", .folder(folder.id ?? 0), library.books.filter { $0.folderID == folder.id }.count)
-                        .help(folder.path)
+                    row(library.displayName(for: folder), library.isCloudFolder(folder) ? "icloud" : "folder",
+                        .folder(folder.id ?? 0), library.books.filter { $0.folderID == folder.id }.count)
+                        .help(library.isCloudFolder(folder) ? "Comic Viewer’s folder in iCloud Drive" : folder.path)
                         .contextMenu {
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder.path)]) }
-                            Button("Remove from Library") {
-                                if section == .folder(folder.id ?? 0) { section = .all }
-                                library.removeFolder(folder)
+                            // The iCloud folder belongs to the app and would only come back.
+                            if !library.isCloudFolder(folder) {
+                                Button("Remove from Library") {
+                                    if section == .folder(folder.id ?? 0) { section = .all }
+                                    library.removeFolder(folder)
+                                }
                             }
                         }
                 }
@@ -104,6 +123,21 @@ struct LibraryView: View {
         }
     }
 
+    // Comics are dragged as their library ids: "comic-viewer-books:3,8,12".
+    private static let dragPrefix = "comic-viewer-books:"
+    private static func bookIDs(in payload: String) -> [Int64] {
+        guard payload.hasPrefix(dragPrefix) else { return [] }
+        return payload.dropFirst(dragPrefix.count).split(separator: ",").compactMap { Int64($0) }
+    }
+    /// Dragging one of several selected comics takes all of them; otherwise just that one.
+    private func dragPayload(for book: LibraryBook) -> String {
+        guard let id = book.id else { return "" }
+        let ids = selection.contains(id) && selection.count > 1 ? selection.sorted() : [id]
+        return Self.dragPrefix + ids.map(String.init).joined(separator: ",")
+    }
+
+    private func renameSeries(_ name: String) { library.promptRenameSeries(name) }
+
     private func row(_ title: String, _ symbol: String, _ value: LibrarySection, _ count: Int) -> some View {
         Label(title, systemImage: symbol)
             .badge(count)
@@ -119,7 +153,7 @@ struct LibraryView: View {
         case .unread: return "Unread"
         case .finished: return "Finished"
         case .series(let name): return name
-        case .folder(let id): return library.folders.first { $0.id == id }?.name ?? "Folder"
+        case .folder(let id): return library.folders.first { $0.id == id }.map(library.displayName) ?? "Folder"
         }
     }
 
@@ -185,36 +219,108 @@ struct LibraryView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 18, alignment: .top)], spacing: 22) {
                         ForEach(books) { book in
-                            BookCell(book: book, isSelected: selected == book.id, showSeries: !isSeriesSection)
+                            BookCell(book: book, isSelected: book.id.map(selection.contains) ?? false, showSeries: !isSeriesSection,
+                                     isDownloading: book.id.map(library.downloading.contains) ?? false)
                                 .onTapGesture(count: 2) { ReaderWindows.shared.open(book) }
-                                .onTapGesture { selected = book.id }
+                                .onTapGesture { click(book, in: books) }
                                 .contextMenu { menu(for: book) }
+                                .draggable(dragPayload(for: book)) {
+                                    let count = book.id.map(selection.contains) == true ? max(1, selection.count) : 1
+                                    Label(count > 1 ? "\(count) comics" : book.title, systemImage: "book.closed")
+                                        .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                                }
                         }
                     }
                     .padding(20)
+                    .frame(maxWidth: .infinity, minHeight: 300, alignment: .top)
+                    .background { Color.clear.contentShape(Rectangle()).onTapGesture { selection = []; gridFocused = true } }
                 }
                 .background(.background)
+                .focusable()
+                .focusEffectDisabled()
+                .focused($gridFocused)
+                .onDeleteCommand { library.remove(library.selectedBooks) }
+                .onCommand(#selector(NSText.selectAll(_:))) { selection = Set(books.compactMap(\.id)) }
+                .onKeyPress(.return) {
+                    guard let book = library.selectedBook else { return .ignored }
+                    ReaderWindows.shared.open(book)
+                    return .handled
+                }
             }
         }
+        .onChange(of: selection) { _, ids in library.selectedBookIDs = ids }
+        // A renamed series stays on screen under its new name.
+        .onChange(of: library.seriesRename) { _, rename in
+            if rename.count == 2, section == .series(rename[0]) { section = .series(rename[1]) }
+        }
+        .onChange(of: library.selectedBookIDs) { _, ids in if ids != selection { selection = ids } }
         .navigationTitle(sectionTitle)
         .navigationSubtitle(library.books.isEmpty ? "" : "\(books.count) comic\(books.count == 1 ? "" : "s")")
     }
 
     private var isSeriesSection: Bool { if case .series = section { return true } else { return false } }
 
+    /// Click selects, ⌘-click adds or removes one, ⇧-click selects the run from the last plain click.
+    private func click(_ book: LibraryBook, in books: [LibraryBook]) {
+        guard let id = book.id else { return }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+            anchor = id
+        } else if flags.contains(.shift), let anchor,
+                  let from = books.firstIndex(where: { $0.id == anchor }), let to = books.firstIndex(where: { $0.id == id }) {
+            selection = Set(books[min(from, to)...max(from, to)].compactMap(\.id))
+        } else {
+            selection = [id]
+            anchor = id
+        }
+        gridFocused = true
+    }
+
+    /// Right-clicking one of several selected comics acts on all of them; otherwise on that comic alone.
     @ViewBuilder
     private func menu(for book: LibraryBook) -> some View {
-        Button(book.isStarted ? "Continue Reading" : "Read") { ReaderWindows.shared.open(book) }
-        Divider()
-        if book.finished {
-            Button("Mark as Unread") { library.setFinished(false, for: book) }
+        let group = library.selectedBooks
+        if group.count > 1, book.id.map(selection.contains) ?? false {
+            Button("Mark as Finished") { group.forEach { library.setFinished(true, for: $0) } }
+            Button("Mark as Unread") { group.forEach { library.setFinished(false, for: $0) } }
+            Divider()
+            if library.cloudFolder != nil, group.contains(where: { !library.isInCloudFolder($0) }) {
+                Button("Move \(group.count) Comics to iCloud") { library.moveToCloud(group) }
+            }
+            Button("Move \(group.count) Comics to Series…") { library.promptMoveToSeries(group) }
+            Button("Remove \(group.count) Comics from Library") { library.remove(group) }
         } else {
-            Button("Mark as Finished") { library.setFinished(true, for: book) }
-            if book.isStarted { Button("Mark as Unread") { library.setFinished(false, for: book) } }
+            let isDownloading = book.id.map(library.downloading.contains) ?? false
+            Button(book.isStarted ? "Continue Reading" : "Read") { ReaderWindows.shared.open(book) }
+            Divider()
+            if book.finished {
+                Button("Mark as Unread") { library.setFinished(false, for: book) }
+            } else {
+                Button("Mark as Finished") { library.setFinished(true, for: book) }
+                if book.isStarted { Button("Mark as Unread") { library.setFinished(false, for: book) } }
+            }
+            Divider()
+            if isDownloading {
+                Button("Cancel Download") { library.cancelDownload(book) }
+            } else if !book.downloaded {
+                Button("Download from iCloud") { Task { await library.download(book) } }
+            } else if book.isInCloud {
+                Button("Remove Download") { library.removeDownload(book) }
+            }
+            if library.cloudFolder != nil, !library.isInCloudFolder(book) {
+                Button("Move to iCloud") { library.moveToCloud([book]) }
+            }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: book.path)]) }
+            Button("Rename File…") { library.promptRename(book) }
+                .disabled(!book.downloaded)
+            Button("Edit Details…") { library.promptEditDetails(book) }
+            Button("Move to Series…") { library.promptMoveToSeries([book]) }
+            if !book.series.isEmpty {
+                Button("Rename Series “\(book.series)”…") { renameSeries(book.series) }
+            }
+            Button("Remove from Library") { library.remove(book) }
         }
-        Divider()
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: book.path)]) }
-        Button("Remove from Library") { library.remove(book) }
     }
 
     @ToolbarContentBuilder
@@ -250,13 +356,19 @@ private struct BookCell: View {
     let book: LibraryBook
     let isSelected: Bool
     let showSeries: Bool
+    let isDownloading: Bool
     @State private var cover: NSImage?
 
     private var subtitle: String {
         var parts: [String] = []
         if showSeries, !book.series.isEmpty, book.series != book.title { parts.append(book.series) }
         if let label = book.issueLabel { parts.append(label) }
-        if parts.isEmpty { parts.append("\(book.pageCount) pages") }
+        if isDownloading { return "Downloading…" }
+        if book.pageCount > 0 {
+            parts.append(book.pageCount == 1 ? "1 page" : "\(book.pageCount) pages")
+        } else if parts.isEmpty || !book.downloaded {
+            parts.append("In iCloud")
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -282,6 +394,25 @@ private struct BookCell: View {
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: isSelected ? 3 : 1))
             .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
+            .overlay(alignment: .topLeading) {
+                if isDownloading {
+                    ProgressView().controlSize(.small).padding(6)
+                        .background(.ultraThinMaterial, in: Circle()).padding(5)
+                        .accessibilityLabel("Downloading from iCloud")
+                } else if !book.downloaded {
+                    Image(systemName: "icloud.and.arrow.down")
+                        .font(.callout).padding(5)
+                        .background(.ultraThinMaterial, in: Circle()).padding(5)
+                        .accessibilityLabel("In iCloud, not downloaded")
+                        .help("In iCloud. Open it to download.")
+                } else if book.isInCloud {
+                    Image(systemName: "icloud")
+                        .font(.callout).padding(5)
+                        .background(.ultraThinMaterial, in: Circle()).padding(5)
+                        .accessibilityLabel("In iCloud, downloaded")
+                        .help("Kept in iCloud and downloaded to this Mac.")
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if book.finished {
                     Image(systemName: "checkmark.circle.fill")
@@ -300,6 +431,6 @@ private struct BookCell: View {
             Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
         .contentShape(Rectangle())
-        .task(id: book.id) { if let id = book.id { cover = await CoverCache.shared.image(for: id) } }
+        .task(id: [book.id ?? 0, Int64(book.pageCount)]) { if let id = book.id { cover = await CoverCache.shared.image(for: id) } }
     }
 }
