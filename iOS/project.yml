@@ -1,0 +1,37 @@
+# The iPhone and iPad app. The Xcode project is generated: run ./generate.sh (needs xcodegen).
+name: ComicViewerMobile
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+packages:
+  ComicViewer:
+    path: ..
+targets:
+  ComicViewerMobile:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Assets.xcassets
+    dependencies:
+      - package: ComicViewer
+        product: ComicCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.patlaplante.ComicViewer
+        PRODUCT_NAME: Comic Viewer
+        PRODUCT_MODULE_NAME: ComicViewerMobile
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: ComicViewer.entitlements
+        CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: "1.1"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO

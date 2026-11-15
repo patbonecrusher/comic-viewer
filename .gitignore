@@ -11,3 +11,4 @@ TestFiles/
 Marketing/app-review-demo.mp4
 .release.env
 __pycache__/
+iOS/Local.xcconfig

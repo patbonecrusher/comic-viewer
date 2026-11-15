@@ -1,18 +1,20 @@
 // Generates the app icon (.iconset folder) with CoreGraphics: a comic page with three
-// panels and a speech balloon on a warm tile. Usage: MakeIcon <out.iconset>
+// panels and a speech balloon on a warm tile.
+// Usage: MakeIcon <out.iconset>       the Mac icon at every size
+//        MakeIcon --ios <out.png>     the iPhone/iPad icon: 1024 pixels, edge to edge, no transparency
 import AppKit
 
 let args = CommandLine.arguments
-guard args.count > 1 else { FileHandle.standardError.write(Data("usage: MakeIcon <output.iconset>\n".utf8)); exit(1) }
-let outDir = URL(fileURLWithPath: args[1])
-try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+guard args.count > 1 else { FileHandle.standardError.write(Data("usage: MakeIcon <output.iconset> | --ios <output.png>\n".utf8)); exit(1) }
 
 func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor { CGColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a) }
 
-func drawIcon(in ctx: CGContext, pixels: CGFloat) {
+func drawIcon(in ctx: CGContext, pixels: CGFloat, edgeToEdge: Bool = false) {
     ctx.scaleBy(x: pixels / 1024, y: pixels / 1024)
     let square = CGRect(x: 100, y: 100, width: 824, height: 824)          // macOS icon grid
-    let shape = CGPath(roundedRect: square, cornerWidth: 186, cornerHeight: 186, transform: nil)
+    // iOS rounds the corners itself and wants the tile to fill the whole image.
+    if edgeToEdge { ctx.translateBy(x: 512, y: 512); ctx.scaleBy(x: 1024 / 824, y: 1024 / 824); ctx.translateBy(x: -512, y: -512) }
+    let shape = edgeToEdge ? CGPath(rect: square, transform: nil) : CGPath(roundedRect: square, cornerWidth: 186, cornerHeight: 186, transform: nil)
     let ink = rgb(28, 28, 44)
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: CGColor(gray: 0, alpha: 0.30))
@@ -51,6 +53,21 @@ func drawIcon(in ctx: CGContext, pixels: CGFloat) {
     for x in [556, 618, 680] { ctx.fillEllipse(in: CGRect(x: CGFloat(x) - 17, y: 678, width: 34, height: 34)) }
     ctx.restoreGState()
 }
+
+if args[1] == "--ios" {
+    guard args.count > 2,
+          let ctx = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { exit(2) }
+    drawIcon(in: ctx, pixels: 1024, edgeToEdge: true)
+    guard let image = ctx.makeImage(),
+          let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: args[2]) as CFURL, "public.png" as CFString, 1, nil) else { exit(2) }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else { exit(2) }
+    exit(0)
+}
+
+let outDir = URL(fileURLWithPath: args[1])
+try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
 for (points, scale) in [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)] {
     let px = points * scale

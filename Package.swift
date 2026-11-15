@@ -4,6 +4,10 @@ import PackageDescription
 let package = Package(
     name: "ComicViewer",
     platforms: [.macOS("15.0"), .iOS("18.0")],
+    products: [
+        // Used by the iPhone/iPad app, which is built from iOS/project.yml.
+        .library(name: "ComicCore", targets: ["ComicCore"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.19"),
         .package(url: "https://github.com/mtgto/Unrar.swift.git", from: "0.3.0"),

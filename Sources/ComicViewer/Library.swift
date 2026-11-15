@@ -15,6 +15,9 @@ final class Library {
     private(set) var storeError: String?
     /// Comics taken out by hand that are still in a library folder (see `restoreRemoved`).
     private(set) var hiddenCount = 0
+    @ObservationIgnored private var cloudSync: Task<Void, Never>?
+    /// Goes up when covers arrive from another device, so cells showing a blank cover look again.
+    private(set) var coverGeneration = 0
     /// The latest series rename (old name, new name), so a window showing the old series can follow it.
     private(set) var seriesRename: [String] = []
     /// Comics being fetched from iCloud right now.
@@ -125,6 +128,7 @@ final class Library {
             }
             scanStatus = nil
             scanning = false
+            scheduleCloudSync(after: 0.5)
             if rescanRequested { rescanRequested = false; rescan() }
         }
     }
@@ -162,6 +166,7 @@ final class Library {
     func update(_ id: Int64, _ change: (inout LibraryBook) -> Void) {
         guard let store else { return }
         store.update(id: id, change)
+        scheduleCloudSync()
         guard let fresh = store.book(id: id) else { return }
         if let index = books.firstIndex(where: { $0.id == id }) {
             if books[index] != fresh { books[index] = fresh }
@@ -446,6 +451,22 @@ final class Library {
                 reload()
                 rescan()
             }
+        }
+    }
+
+    /// Shares covers and reading positions of the comics in the iCloud folder with the reader's other
+    /// devices, and picks up theirs. Runs a little after the last change, off the main thread.
+    func scheduleCloudSync(after seconds: Double = 2, retries: Int = 5) {
+        guard let store, let cloudFolder, let folderID = folders.first(where: { $0.path == cloudFolder.path })?.id else { return }
+        cloudSync?.cancel()
+        cloudSync = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            let sync = CloudSync(container: cloudFolder.deletingLastPathComponent())
+            let result = await Task.detached(priority: .utility) { sync.sync(store: store, folderID: folderID, root: cloudFolder) }.value
+            if result.changed > 0 { coverGeneration += 1; reload() }
+            // Files from other devices that were still coming down: look again shortly.
+            if result.pending, retries > 0, !Task.isCancelled { scheduleCloudSync(after: 4, retries: retries - 1) }
         }
     }
 

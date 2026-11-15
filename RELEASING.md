@@ -42,3 +42,17 @@ Tools/asc.py profiles     # → Resources/ComicViewer.provisionprofile, -devid.p
 `build.sh` embeds the profile for the signing mode and claims the iCloud entitlements only when the profile grants the
 container; without one (or with `--sign none`) the app builds as before and simply has no iCloud folder. Profiles expire
 with their certificates; rerun the command to renew them.
+
+## iPhone and iPad
+
+The iOS app lives in `iOS/` and shares `ComicCore` with the Mac app. Its Xcode project is generated (needs `xcodegen`):
+
+```sh
+iOS/generate.sh                               # writes iOS/Local.xcconfig (signing team, git-ignored) and the .xcodeproj
+open iOS/ComicViewerMobile.xcodeproj          # choose a simulator or your device and Run
+```
+
+It uses the Mac app's bundle ID and iCloud container, so comics the Mac app keeps in iCloud show up on the phone, and
+the two can be one App Store record. Launch arguments for screenshots and testing: `-openFirst YES`, `-startPage 12`,
+`-panelMode YES`, `-testScript nnLnP` (n next, p previous, L sideways, P upright). The icon comes from
+`swift run MakeIcon --ios iOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.

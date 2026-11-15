@@ -42,6 +42,9 @@ public struct LibraryBook: Codable, Identifiable, Equatable, Sendable, Fetchable
     /// file again. Set when the app renames a file whose details came from its old name: the series
     /// and numbering stay, and the title follows the new name.
     public var pinned: Bool = false
+    /// When the reading position (page, finished, last read) last changed, on whichever device
+    /// changed it. Devices sharing a comic through iCloud keep the newest.
+    public var progressChangedAt: Date?
 
     public mutating func didInsert(_ inserted: InsertionSuccess) { id = inserted.rowID }
 
@@ -177,6 +180,11 @@ public final class LibraryStore: @unchecked Sendable {
         migrator.registerMigration("v6-pinned") { db in
             try db.alter(table: "book") { t in t.add(column: "pinned", .boolean).notNull().defaults(to: false) }
         }
+        migrator.registerMigration("v7-progress-stamp") { db in
+            try db.alter(table: "book") { t in t.add(column: "progressChangedAt", .datetime) }
+            // What was read before this existed counts as changed when it was last read.
+            try db.execute(sql: "UPDATE book SET progressChangedAt = lastReadAt WHERE lastReadAt IS NOT NULL")
+        }
         try migrator.migrate(database)
     }
 
@@ -212,6 +220,25 @@ public final class LibraryStore: @unchecked Sendable {
         }
     }
 
+    /// Points a folder and the comics in it at the folder's new place. On iPhone and iPad an app's
+    /// own folders move when it is reinstalled or restored; the comics in them are still the same ones.
+    public func moveFolder(id: Int64, to newPath: String) {
+        try? database.write { db in
+            guard var folder = try LibraryFolder.fetchOne(db, key: id), folder.path != newPath else { return }
+            let old = folder.path
+            for var book in try LibraryBook.filter(Column("folderID") == id).fetchAll(db) where book.path.hasPrefix(old + "/") {
+                let moved = newPath + book.path.dropFirst(old.count)
+                // Something already recorded at the new place would collide; this record has the history.
+                try LibraryBook.filter(Column("path") == moved && Column("id") != book.id).deleteAll(db)
+                book.path = moved
+                try book.update(db)
+            }
+            try LibraryFolder.filter(Column("path") == newPath && Column("id") != id).deleteAll(db)
+            folder.path = newPath
+            try folder.update(db)
+        }
+    }
+
     /// Forgets a folder and the comics found in it. Files on disk are not touched.
     public func removeFolder(id: Int64) throws {
         let ids = try database.write { db -> [Int64] in
@@ -227,7 +254,13 @@ public final class LibraryStore: @unchecked Sendable {
     public func update(id: Int64, _ change: (inout LibraryBook) -> Void) {
         try? database.write { db in
             guard var book = try LibraryBook.fetchOne(db, key: id) else { return }
+            let before = book
             change(&book)
+            // A change of reading position is stamped, unless the change brought its own stamp (from another device).
+            if book.progressChangedAt == before.progressChangedAt,
+               book.page != before.page || book.finished != before.finished || book.lastReadAt != before.lastReadAt {
+                book.progressChangedAt = Date()
+            }
             try book.update(db)
         }
     }
@@ -456,8 +489,23 @@ public final class LibraryStore: @unchecked Sendable {
         var url = url
         url.removeAllCachedResourceValues()
         guard let values = try? url.resourceValues(forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]),
-              values.isUbiquitousItem == true, let status = values.ubiquitousItemDownloadingStatus else { return true }
+              values.isUbiquitousItem == true, let status = values.ubiquitousItemDownloadingStatus else {
+            // Where iCloud leaves a ".Name.cbz.icloud" stand-in for a file that isn't here, the file itself is absent.
+            return !FileManager.default.fileExists(atPath: cloudStandIn(for: url).path) || FileManager.default.fileExists(atPath: url.path)
+        }
         return status != .notDownloaded
+    }
+
+    /// The hidden stand-in iCloud keeps in place of a file that is not downloaded: ".Name.cbz.icloud".
+    static func cloudStandIn(for url: URL) -> URL {
+        url.deletingLastPathComponent().appendingPathComponent("." + url.lastPathComponent + ".icloud")
+    }
+
+    /// The file a stand-in stands for, or nil if the URL isn't one.
+    static func fileBehindStandIn(_ url: URL) -> URL? {
+        let name = url.lastPathComponent
+        guard name.hasPrefix("."), name.hasSuffix(".icloud"), name.count > 8 else { return nil }
+        return url.deletingLastPathComponent().appendingPathComponent(String(name.dropFirst().dropLast(7)))
     }
 
     /// Whether a file is kept in iCloud at all.
@@ -491,11 +539,32 @@ public final class LibraryStore: @unchecked Sendable {
     public func scan(_ folder: LibraryFolder, at url: URL, progress: (Int, Int) -> Void = { _, _ in }) -> ScanResult {
         guard let folderID = folder.id else { return ScanResult() }
         var files: [URL] = []
+        let rootPath = url.standardizedFileURL.path, resolvedRoot = url.resolvingSymlinksInPath().path
         let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-                                                        options: [.skipsHiddenFiles, .skipsPackageDescendants])
-        while let file = enumerator?.nextObject() as? URL {
-            if Self.comicExtensions.contains(file.pathExtension.lowercased()) { files.append(file.standardizedFileURL) }
+                                                        options: [.skipsPackageDescendants])
+        while let found = enumerator?.nextObject() as? URL {
+            // Hidden files and folders are skipped, except iCloud's stand-ins for comics that aren't downloaded.
+            var file = found
+            if found.lastPathComponent.hasPrefix(".") {
+                guard let real = Self.fileBehindStandIn(found) else {
+                    if (try? found.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { enumerator?.skipDescendants() }
+                    continue
+                }
+                file = real
+            }
+            guard Self.comicExtensions.contains(file.pathExtension.lowercased()) else { continue }
+            // Every comic's path starts with the folder's path exactly as the library knows it. The
+            // system can hand back the same place spelled differently (/private/var for /var), most
+            // of all for files that aren't there yet, and a comic must not change path when it arrives.
+            let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().path
+            if parent == resolvedRoot || parent.hasPrefix(resolvedRoot + "/") {
+                file = URL(fileURLWithPath: rootPath + parent.dropFirst(resolvedRoot.count) + "/" + file.lastPathComponent)
+            } else {
+                file = file.standardizedFileURL
+            }
+            files.append(file)
         }
+        files = Array(Set(files)).sorted { $0.path < $1.path }
         let known = Dictionary(books(includingHidden: true).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         var result = ScanResult()
         for (index, file) in files.enumerated() {

@@ -431,6 +431,8 @@ private struct BookCell: View {
             Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
         .contentShape(Rectangle())
-        .task(id: [book.id ?? 0, Int64(book.pageCount)]) { if let id = book.id { cover = await CoverCache.shared.image(for: id) } }
+        .task(id: [book.id ?? 0, Int64(book.pageCount), Int64(Library.shared.coverGeneration)]) {
+            if let id = book.id { cover = await CoverCache.shared.image(for: id) }
+        }
     }
 }

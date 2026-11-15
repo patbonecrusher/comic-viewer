@@ -46,6 +46,13 @@ brew install --cask patbonecrusher/tap/comic-viewer
 Or download the signed, notarized app from [Releases](https://github.com/patbonecrusher/comic-viewer/releases/latest).
 Website: https://patbonecrusher.github.io/comic-viewer/
 
+## iPhone and iPad (in progress)
+
+An iOS app in `iOS/` shares the core with the Mac app: a library of the comics in its own folder and in the same
+iCloud Drive folder the Mac app uses, and a reader with panel-by-panel reading that re-fits when the device is turned
+(sideways: fill the width, or two facing pages). Run `iOS/generate.sh`, open `iOS/ComicViewerMobile.xcodeproj`, and Run.
+It is not on the App Store yet.
+
 ## Build
 
 ```sh

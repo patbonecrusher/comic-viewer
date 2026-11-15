@@ -296,6 +296,63 @@ final class ComicCoreTests: XCTestCase {
         XCTAssertEqual(parse("Blade Runner 2049 - Art Book.cbz").number, nil)
     }
 
+    func testCoverAndProgressReachADeviceThatNeverDownloadedTheComic() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = root.appendingPathComponent("Container")
+        // The Mac has the file.
+        let macComics = container.appendingPathComponent("Documents/Saga")
+        try FileManager.default.createDirectory(at: macComics, withIntermediateDirectories: true)
+        try makeComic(at: macComics.appendingPathComponent("Saga 001.cbz"), pages: 5)
+        let mac = try LibraryStore(directory: root.appendingPathComponent("MacStore"))
+        let macRoot = container.appendingPathComponent("Documents")
+        let macFolder = try mac.addFolder(path: macRoot.path, bookmark: Data())
+        _ = mac.scan(macFolder, at: macRoot)
+        let onMac = try XCTUnwrap(mac.books().first)
+        mac.update(id: onMac.id!) { $0.page = 3; $0.lastReadAt = Date(timeIntervalSinceNow: -60) }
+        mac.setDetails(id: onMac.id!, title: "Chapter One", series: "Saga", volume: 1, number: 1, year: 2012)
+
+        // The phone sees the same folder, but iCloud has only left a stand-in for the file.
+        let phoneRoot = root.appendingPathComponent("Phone/Documents")
+        try FileManager.default.createDirectory(at: phoneRoot.appendingPathComponent("Saga"), withIntermediateDirectories: true)
+        let standIn = phoneRoot.appendingPathComponent("Saga/.Saga 001.cbz.icloud")
+        try Data().write(to: standIn)
+        let phone = try LibraryStore(directory: root.appendingPathComponent("PhoneStore"))
+        let phoneFolder = try phone.addFolder(path: phoneRoot.path, bookmark: Data())
+        _ = phone.scan(phoneFolder, at: phoneRoot)
+        var onPhone = try XCTUnwrap(phone.books().first)
+        XCTAssertFalse(onPhone.downloaded)
+        XCTAssertEqual(onPhone.pageCount, 0)
+
+        let sync = CloudSync(container: container)
+        XCTAssertEqual(sync.sync(store: mac, folderID: macFolder.id!, root: macRoot).changed, 0)
+        XCTAssertEqual(sync.sync(store: phone, folderID: phoneFolder.id!, root: phoneRoot).changed, 1)
+        onPhone = try XCTUnwrap(phone.books().first)
+        XCTAssertEqual([onPhone.title, onPhone.series], ["Chapter One", "Saga"])
+        XCTAssertEqual([onPhone.pageCount, onPhone.page, onPhone.volume ?? 0], [5, 3, 1])
+        XCTAssertTrue(onPhone.isStarted)
+        XCTAssertFalse(onPhone.downloaded)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: phone.coverURL(for: onPhone.id!).path))
+        // Nothing more to do on a second pass, either way.
+        XCTAssertEqual(sync.sync(store: phone, folderID: phoneFolder.id!, root: phoneRoot).changed, 0)
+        XCTAssertEqual(sync.sync(store: mac, folderID: macFolder.id!, root: macRoot).changed, 0)
+
+        // The phone fetches the file and reads on; the Mac picks up the new position, and its details survive.
+        try FileManager.default.removeItem(at: standIn)
+        try FileManager.default.copyItem(at: macComics.appendingPathComponent("Saga 001.cbz"), to: phoneRoot.appendingPathComponent("Saga/Saga 001.cbz"))
+        _ = phone.scan(phoneFolder, at: phoneRoot)
+        onPhone = try XCTUnwrap(phone.books().first)
+        XCTAssertTrue(onPhone.downloaded)
+        XCTAssertEqual([onPhone.title, String(onPhone.page)], ["Chapter One", "3"])
+        phone.update(id: onPhone.id!) { $0.page = 4; $0.finished = true; $0.lastReadAt = Date() }
+        _ = sync.sync(store: phone, folderID: phoneFolder.id!, root: phoneRoot)
+        XCTAssertEqual(sync.sync(store: mac, folderID: macFolder.id!, root: macRoot).changed, 1)
+        let after = try XCTUnwrap(mac.books().first)
+        XCTAssertEqual(after.page, 4)
+        XCTAssertTrue(after.finished)
+        XCTAssertEqual(after.title, "Chapter One")
+    }
+
     func testRenamedFileKeepsItsRecord() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).standardizedFileURL
         let comics = root.appendingPathComponent("Comics")
