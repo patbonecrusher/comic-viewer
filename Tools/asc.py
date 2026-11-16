@@ -289,9 +289,12 @@ def cmd_build(asc, version=None, build_number=None):
         states = [f"{b['attributes']['version']}:{b['attributes']['processingState']}" for b in pending]
         die(f"no processed build yet (recent: {states}). Try again in a few minutes.")
     build = builds[0]
-    asc.patch(f"/appStoreVersions/{v['id']}", "appStoreVersions", v["id"],
+    # The store version takes the name of the build it ships (an unreleased 1.0 becomes 1.2).
+    marketing = asc.get(f"/builds/{build['id']}/preReleaseVersion")["data"]["attributes"]["version"]
+    attributes = {"versionString": marketing} if marketing != v["attributes"]["versionString"] else None
+    asc.patch(f"/appStoreVersions/{v['id']}", "appStoreVersions", v["id"], attributes=attributes,
               relationships={"build": ref("builds", build["id"])})
-    print(f"✓ attached build {build['attributes']['version']} to {v['attributes']['versionString']}")
+    print(f"✓ attached build {build['attributes']['version']} to {marketing}")
 
 
 def cmd_price(asc):
