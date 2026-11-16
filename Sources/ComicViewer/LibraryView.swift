@@ -286,7 +286,7 @@ struct LibraryView: View {
             Button("Mark as Unread") { group.forEach { library.setFinished(false, for: $0) } }
             Divider()
             if library.cloudFolder != nil, group.contains(where: { !library.isInCloudFolder($0) }) {
-                Button("Move \(group.count) Comics to iCloud") { library.moveToCloud(group) }
+                Button("Copy \(group.count) Comics to iCloud") { library.copyToCloud(group) }
             }
             Button("Move \(group.count) Comics to Series…") { library.promptMoveToSeries(group) }
             Button("Remove \(group.count) Comics from Library") { library.remove(group) }
@@ -309,7 +309,7 @@ struct LibraryView: View {
                 Button("Remove Download") { library.removeDownload(book) }
             }
             if library.cloudFolder != nil, !library.isInCloudFolder(book) {
-                Button("Move to iCloud") { library.moveToCloud([book]) }
+                Button("Copy to iCloud") { library.copyToCloud([book]) }
             }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: book.path)]) }
             Button("Rename File…") { library.promptRename(book) }

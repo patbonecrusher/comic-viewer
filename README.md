@@ -32,7 +32,7 @@ Native macOS app (Swift, SwiftUI/AppKit). Sandboxed, no accounts, no telemetry.
   File → Restore Removed Comics. File → Remove Missing Comics clears entries whose files are gone.
 - **iCloud** — comics kept in iCloud Drive are listed without being downloaded, show a cloud badge, download when
   opened, and can have their local copy removed again. With iCloud enabled for the build (see RELEASING.md), the app
-  also has its own "Comic Viewer" folder in iCloud Drive and a Move to iCloud command.
+  also has its own "Comic Viewer" folder in iCloud Drive and a Copy to iCloud command, which leaves the original file where it is.
 - **Reader** — single and double page, fit page / width / height, pinch zoom, thumbnails, page scrubber,
   keyboard, click and swipe navigation, left-to-right or right-to-left (manga) per comic.
 - **Formats** — CBZ, CBR, PDF and folders of images; reads `ComicInfo.xml` when present.

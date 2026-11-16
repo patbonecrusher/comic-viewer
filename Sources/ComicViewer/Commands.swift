@@ -41,7 +41,7 @@ struct AppCommands: Commands {
                 }
             }
             if Library.shared.cloudFolder != nil {
-                Button("Move to iCloud") { Library.shared.moveToCloud(Library.shared.selectedBooks) }
+                Button("Copy to iCloud") { Library.shared.copyToCloud(Library.shared.selectedBooks) }
                     .disabled(reader != nil || Library.shared.selectedBooks.allSatisfy(Library.shared.isInCloudFolder))
             }
             Button("Remove from Library") { Library.shared.remove(Library.shared.selectedBooks) }

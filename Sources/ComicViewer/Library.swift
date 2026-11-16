@@ -479,12 +479,14 @@ final class Library {
         return id
     }
 
-    /// Moves comics into the app's iCloud Drive folder (a subfolder per series), keeping their
-    /// reading positions and panel edits. A file that can't be moved is copied instead.
-    func moveToCloud(_ moved: [LibraryBook]) {
+    /// Copies comics into the app's iCloud Drive folder (a subfolder per series). The original file
+    /// stays where it is, untouched. The library follows the copy, with its reading position and
+    /// panel edits, because that is the one the reader's other devices see; an original in a
+    /// library folder is set aside (File › Restore Removed Comics) so the comic isn't listed twice.
+    func copyToCloud(_ moved: [LibraryBook]) {
         guard let store, let cloudFolder, let folderID = cloudFolderID() else { return }
         var skipped: [String] = []
-        var jobs: [(id: Int64, title: String, source: URL, directory: URL)] = []
+        var jobs: [(id: Int64, title: String, source: URL, directory: URL, folderID: Int64?)] = []
         for book in moved where !isInCloudFolder(book) {
             guard let id = book.id, let source = url(for: book), FileManager.default.fileExists(atPath: source.path) else {
                 skipped.append("\(book.title): the file could not be found")
@@ -495,14 +497,13 @@ final class Library {
                 continue
             }
             let series = LibraryBook.fileNameSafe(book.series)
-            jobs.append((id, book.title, source, series.isEmpty ? cloudFolder : cloudFolder.appendingPathComponent(series, isDirectory: true)))
+            jobs.append((id, book.title, source, series.isEmpty ? cloudFolder : cloudFolder.appendingPathComponent(series, isDirectory: true), book.folderID))
         }
         guard !jobs.isEmpty || !skipped.isEmpty else { return }
         Task {
-            var copied: [String] = []
             for (index, job) in jobs.enumerated() {
-                scanStatus = "Moving to iCloud… \(index + 1) of \(jobs.count)"
-                let outcome = await Task.detached(priority: .userInitiated) { () -> Result<Bool, Error> in
+                scanStatus = "Copying to iCloud… \(index + 1) of \(jobs.count)"
+                let outcome = await Task.detached(priority: .userInitiated) { () -> Error? in
                     do {
                         let fileManager = FileManager.default
                         try fileManager.createDirectory(at: job.directory, withIntermediateDirectories: true)
@@ -513,36 +514,27 @@ final class Library {
                             destination = job.directory.appendingPathComponent(ext.isEmpty ? "\(base) \(attempt)" : "\(base) \(attempt).\(ext)")
                             attempt += 1
                         }
-                        var wasMoved = true
-                        do {
-                            try fileManager.setUbiquitous(true, itemAt: job.source, destinationURL: destination)
-                        } catch {
-                            // The sandbox lets the app read a comic opened on its own but not take it out of its folder.
-                            try fileManager.copyItem(at: job.source, to: destination)
-                            wasMoved = false
-                        }
+                        try fileManager.copyItem(at: job.source, to: destination)
                         try store.relocate(id: job.id, to: destination, intoFolder: folderID)
-                        return .success(wasMoved)
+                        // The original is still in its library folder, where the next scan would list it again.
+                        if let folder = job.folderID, let original = try? store.record(ComicBook(url: job.source), folderID: folder), let id = original.id {
+                            store.takeOut(ids: [id])
+                        }
+                        return nil
                     } catch {
-                        return .failure(error)
+                        return error
                     }
                 }.value
-                switch outcome {
-                case .success(true): break
-                case .success(false): copied.append(job.title)
-                case .failure(let error): skipped.append("\(job.title): \(error.localizedDescription)")
-                }
+                if let outcome { skipped.append("\(job.title): \(outcome.localizedDescription)") }
                 CoverCache.shared.forget(job.id)
             }
             scanStatus = nil
             reload()
-            guard !skipped.isEmpty || !copied.isEmpty else { return }
+            scheduleCloudSync(after: 0.5)      // share the covers of what just arrived in iCloud
+            guard !skipped.isEmpty else { return }
             let alert = NSAlert()
-            alert.messageText = skipped.isEmpty ? "Copied to iCloud" : "Some comics were not moved to iCloud"
-            var lines: [String] = []
-            if !copied.isEmpty { lines.append("Copied, with the original left in place (Comic Viewer isn’t allowed to move it):\n" + copied.map { "• " + $0 }.joined(separator: "\n")) }
-            if !skipped.isEmpty { lines.append(skipped.map { "• " + $0 }.joined(separator: "\n")) }
-            alert.informativeText = lines.joined(separator: "\n\n")
+            alert.messageText = "Some comics were not copied to iCloud"
+            alert.informativeText = skipped.map { "• " + $0 }.joined(separator: "\n")
             alert.runModal()
         }
     }

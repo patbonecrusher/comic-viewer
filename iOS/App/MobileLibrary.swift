@@ -26,6 +26,9 @@ final class MobileLibrary {
     @ObservationIgnored private var scanAgain = false
     @ObservationIgnored private let covers = NSCache<NSNumber, UIImage>()
     @ObservationIgnored private var cloudSync: Task<Void, Never>?
+    @ObservationIgnored private var cloudWatch: NSMetadataQuery?
+    @ObservationIgnored private var cloudWatchers: [NSObjectProtocol] = []
+    @ObservationIgnored private var cloudNews: Task<Void, Never>?
 
     private init() {
         let files = FileManager.default
@@ -74,6 +77,43 @@ final class MobileLibrary {
             cloudRoot = root
             cloudFolder = folder(saved: "cloudFolderID", at: root)
             cloudAvailable = cloudFolder != nil
+            rescan()
+            watchCloud()
+        }
+    }
+
+    /// Keeps an eye on the iCloud folder while the app is open, so a comic added on another device,
+    /// its cover and how far it was read there show up without the reader asking.
+    private func watchCloud() {
+        guard cloudWatch == nil, cloudFolder != nil else { return }
+        let query = NSMetadataQuery()
+        // Documents holds the comics; the rest of the container holds the shared covers and positions.
+        query.searchScopes = [NSMetadataQueryUbiquitousDocumentsScope, NSMetadataQueryUbiquitousDataScope]
+        query.predicate = NSPredicate(format: "%K LIKE '*'", NSMetadataItemFSNameKey)
+        query.notificationBatchingInterval = 1
+        let center = NotificationCenter.default
+        cloudWatchers.append(center.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: .main) { [weak self] note in
+            let arrivals = (note.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [Any])?.isEmpty == false
+            let departures = (note.userInfo?[NSMetadataQueryUpdateRemovedItemsKey] as? [Any])?.isEmpty == false
+            MainActor.assumeIsolated { self?.cloudChanged(filesCameOrWent: arrivals || departures) }
+        })
+        cloudWatch = query
+        query.start()
+    }
+
+    /// Something changed in iCloud. Changes come in bursts (a download reports its progress many
+    /// times), so wait for a quiet moment before looking.
+    private func cloudChanged(filesCameOrWent: Bool) {
+        if !filesCameOrWent {
+            // Only contents changed: a cover or a reading position from another device, most likely.
+            if cloudNews == nil { scheduleCloudSync(after: 1.5) }
+            return
+        }
+        cloudNews?.cancel()
+        cloudNews = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            cloudNews = nil
             rescan()
         }
     }

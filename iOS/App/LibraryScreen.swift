@@ -69,7 +69,9 @@ struct LibraryScreen: View {
                     grid
                 }
             }
-            .navigationTitle(series ?? "Comics")
+            // No big "Comics" heading: the covers start at the top. A chosen series is named in the bar.
+            .navigationTitle(series ?? "")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { filterMenu }
                 ToolbarItem(placement: .topBarTrailing) {

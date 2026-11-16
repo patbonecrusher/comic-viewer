@@ -44,6 +44,8 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
     private var display: SpreadDisplay?
     private var focus: PanelFocus?
     private var laidOutSize = CGSize.zero
+    /// The reader pinched in while a panel was in focus and is looking around; cleared at the next step.
+    private var lookingAround = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -110,6 +112,7 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
     /// Sizes the pages for the view as it is now and goes back to the panel in focus.
     private func layoutPages(animated: Bool) {
         laidOutSize = bounds.size
+        lookingAround = false
         let spread = spreadSize
         guard spread.width > 0, bounds.width > 0, bounds.height > 0 else { return }
         let fitPage = min(bounds.width / spread.width, bounds.height / spread.height)
@@ -145,6 +148,7 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
         guard let rect = focus?.rect else {
             // Free reading: scrolling and pinching are the reader's.
             isScrollEnabled = true
+            lookingAround = false
             setDim(nil)
             let change = { self.zoomScale = 1; self.centreContent(); self.contentOffset = CGPoint(x: -self.contentInset.left, y: -self.contentInset.top) }
             if animated { UIView.animate(withDuration: 0.3, animations: change) } else { change() }
@@ -152,6 +156,7 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
         }
         // Panel in focus: zoom so it fills the view, centred, with room to centre panels at the page's edge.
         isScrollEnabled = false
+        lookingAround = false
         var panel = CGRect(x: rect.minX * size.width, y: rect.minY * size.height, width: rect.width * size.width, height: rect.height * size.height)
         setDim(panel)
         let margin = min(size.width, size.height) * 0.012
@@ -192,6 +197,16 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { content }
     func scrollViewDidZoom(_ scrollView: UIScrollView) { centreContent() }
 
+    /// Pinching while a panel is in focus lets the reader move around the page until the next step.
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        guard focus != nil, let pinch = pinchGestureRecognizer, pinch.state == .began || pinch.state == .changed else { return }
+        lookingAround = true
+        isScrollEnabled = true
+    }
+
+    /// Zoomed in by hand: dragging moves around the page, so it must not also turn it.
+    private var zoomedByHand: Bool { focus == nil ? zoomScale > 1.01 : lookingAround }
+
     // MARK: Taps and swipes
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
@@ -203,7 +218,7 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
 
     @objc private func swiped(_ swipe: UISwipeGestureRecognizer) {
         // A swipe turns the page unless the reader has zoomed in and is moving around the page.
-        guard focus != nil || contentSize.width <= bounds.width + 1 else { return }
+        guard !zoomedByHand, focus != nil || contentSize.width <= bounds.width + 1 else { return }
         let forward = (swipe.direction == .left) != forwardIsLeft
         if forward { onForward() } else { onBackward() }
     }
