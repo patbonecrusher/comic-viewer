@@ -497,7 +497,8 @@ final class ComicCoreTests: XCTestCase {
         context.closePDF()
         let book = try ComicBook(url: url)
         XCTAssertEqual(book.pageCount, 2)
-        XCTAssertEqual(book.pageSize(at: 0), CGSize(width: 600, height: 900))
+        // A small page is drawn large enough to stay sharp when zoomed in: 3600 pixels on its long side.
+        XCTAssertEqual(book.pageSize(at: 0), CGSize(width: 2400, height: 3600))
         let image = try book.image(at: 1, maxPixelSize: 150)
         XCTAssertEqual([image.width, image.height], [100, 150])
     }

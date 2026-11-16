@@ -5,8 +5,16 @@ import Foundation
 final class PDFSource: PageSource {
     private let document: CGPDFDocument
     private let lock = NSLock()
-    /// Pixels per PDF point when no size limit is given (216 dpi).
+    /// Pixels per PDF point for a page of ordinary size (216 dpi).
     private static let nominalScale: CGFloat = 3
+    /// A page is drawn at least this many pixels on its long side. Some PDFs declare small pages
+    /// (a comic album as 307 × 404 points) that hold fine artwork and lettering; at 216 dpi those
+    /// come out under a thousand pixels wide and turn blurry as soon as the reader zooms in.
+    private static let nominalLongSide: CGFloat = 3600
+
+    private static func scale(for points: CGSize) -> CGFloat {
+        max(nominalScale, nominalLongSide / max(points.width, points.height, 1))
+    }
 
     init(url: URL) throws {
         guard let document = CGPDFDocument(url as CFURL) else { throw ComicError.unreadableFile("not a readable PDF") }
@@ -27,8 +35,8 @@ final class PDFSource: PageSource {
     func pageSize(at index: Int) throws -> CGSize {
         lock.lock(); defer { lock.unlock() }
         guard let page = document.page(at: index + 1) else { throw ComicError.unreadablePage(index) }
-        let size = pointSize(of: page)
-        return CGSize(width: size.width * Self.nominalScale, height: size.height * Self.nominalScale)
+        let size = pointSize(of: page), scale = Self.scale(for: size)
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
     func image(at index: Int, maxPixelSize: Int?) throws -> CGImage {
@@ -36,7 +44,7 @@ final class PDFSource: PageSource {
         guard let page = document.page(at: index + 1) else { throw ComicError.unreadablePage(index) }
         let points = pointSize(of: page)
         guard points.width > 0, points.height > 0 else { throw ComicError.unreadablePage(index) }
-        var scale = Self.nominalScale
+        var scale = Self.scale(for: points)
         if let maxPixelSize { scale = min(scale, CGFloat(maxPixelSize) / max(points.width, points.height)) }
         let width = max(1, Int((points.width * scale).rounded())), height = max(1, Int((points.height * scale).rounded()))
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
