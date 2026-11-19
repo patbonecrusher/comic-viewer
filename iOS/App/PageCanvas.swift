@@ -46,6 +46,8 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
     private var laidOutSize = CGSize.zero
     /// The reader pinched in while a panel was in focus and is looking around; cleared at the next step.
     private var lookingAround = false
+    /// How far the view is zoomed to show the panel in focus.
+    private var panelZoom: CGFloat = 1
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -162,6 +164,7 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
         let margin = min(size.width, size.height) * 0.012
         panel = panel.insetBy(dx: -margin, dy: -margin)
         let zoom = min(maximumZoomScale, max(minimumZoomScale, min(bounds.width / panel.width, bounds.height / panel.height)))
+        panelZoom = zoom
         let change = {
             self.contentInset = UIEdgeInsets(top: self.bounds.height, left: self.bounds.width, bottom: self.bounds.height, right: self.bounds.width)
             self.zoomScale = zoom
@@ -202,6 +205,16 @@ final class CanvasView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerD
         guard focus != nil, let pinch = pinchGestureRecognizer, pinch.state == .began || pinch.state == .changed else { return }
         lookingAround = true
         isScrollEnabled = true
+    }
+
+    /// Pinching back out to about where it started returns to the normal view (the whole page, or
+    /// the panel in focus), where swipes turn the page again. A pinch rarely ends exactly there.
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        if focus != nil {
+            if lookingAround, scale <= panelZoom * 1.15 { applyFocus(animated: true) }
+        } else if scale != 1, scale > 0.999, scale <= 1.15 {
+            UIView.animate(withDuration: 0.2) { self.zoomScale = 1; self.centreContent() }
+        }
     }
 
     /// Zoomed in by hand: dragging moves around the page, so it must not also turn it.
